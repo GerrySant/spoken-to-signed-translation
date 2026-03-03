@@ -219,6 +219,75 @@ def _write_chunk(chunk_poses: list[Pose], chunk_path: str):
         chunk_pose.write(f)
 
 
+def _process_pose(text, spoken_language, glosser, pose_lookup, signed_language, need_coverage, stats):
+    sentences = _text_to_gloss(text, spoken_language, glosser)
+    result = _gloss_to_pose(sentences, pose_lookup, spoken_language, signed_language, need_coverage)
+    if need_coverage:
+        pose, all_token_coverages = result
+        for sentence_coverages in all_token_coverages:
+            stats.add_sentence(sentence_coverages)
+    else:
+        pose = result
+    return pose
+
+
+def _bulk_sequential(texts, args, pose_lookup, need_coverage, stats):
+    for i, text in enumerate(texts):
+        pose = _process_pose(
+            text, args.spoken_language, args.glosser, pose_lookup, args.signed_language, need_coverage, stats
+        )
+        pose_path = os.path.join(args.output_dir, f"{i:06d}.pose")
+        with open(pose_path, "wb") as f:
+            pose.write(f)
+        print(f"[{i + 1}/{len(texts)}] {pose_path}")
+
+
+def _bulk_compacted(texts, args, pose_lookup, need_coverage, stats):
+    metadata_rows: list[dict] = []
+    chunk_index = 0
+    chunk_poses: list[Pose] = []
+    chunk_frame_count = 0
+
+    for i, text in enumerate(texts):
+        pose = _process_pose(
+            text, args.spoken_language, args.glosser, pose_lookup, args.signed_language, need_coverage, stats
+        )
+        pose_frames = len(pose.body.data)
+
+        # Flush current chunk if adding this pose would exceed the limit (keep at least one pose per chunk)
+        if chunk_poses and chunk_frame_count + pose_frames > args.max_frames_per_chunk:
+            chunk_path = os.path.join(args.output_dir, f"chunk_{chunk_index:06d}.pose")
+            _write_chunk(chunk_poses, chunk_path)
+            print(f"  Saved chunk {chunk_index}: {chunk_path} ({chunk_frame_count} frames)")
+            chunk_index += 1
+            chunk_poses = []
+            chunk_frame_count = 0
+
+        start_frame = chunk_frame_count
+        end_frame = chunk_frame_count + pose_frames - 1
+        chunk_path = os.path.join(args.output_dir, f"chunk_{chunk_index:06d}.pose")
+        metadata_rows.append(
+            {"text": text, "pose_file": os.path.abspath(chunk_path), "start_frame": start_frame, "end_frame": end_frame}
+        )
+        chunk_poses.append(pose)
+        chunk_frame_count += pose_frames
+        print(f"[{i + 1}/{len(texts)}] buffered into {chunk_path} frames {start_frame}–{end_frame}")
+
+    # Write the last chunk
+    if chunk_poses:
+        chunk_path = os.path.join(args.output_dir, f"chunk_{chunk_index:06d}.pose")
+        _write_chunk(chunk_poses, chunk_path)
+        print(f"  Saved chunk {chunk_index}: {chunk_path} ({chunk_frame_count} frames)")
+
+    # Write metadata TSV
+    metadata_path = os.path.join(args.output_dir, "metadata.tsv")
+    with open(metadata_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["text", "pose_file", "start_frame", "end_frame"], delimiter="\t")
+        writer.writeheader()
+        writer.writerows(metadata_rows)
+    print(f"Metadata saved to: {metadata_path}")
+
+
 def text_to_gloss_to_pose_bulk():
     args_parser = argparse.ArgumentParser(
         description="Translate a file of texts (one per line) into pose files in bulk."
@@ -268,78 +337,9 @@ def text_to_gloss_to_pose_bulk():
     pose_lookup = _make_lookup(args.lexicon)
 
     if args.compacted_poses:
-        metadata_rows: list[dict] = []
-        chunk_index = 0
-        chunk_poses: list[Pose] = []
-        chunk_frame_count = 0
-
-        for i, text in enumerate(texts):
-            sentences = _text_to_gloss(text, args.spoken_language, args.glosser)
-            result = _gloss_to_pose(sentences, pose_lookup, args.spoken_language, args.signed_language, need_coverage)
-
-            if need_coverage:
-                pose, all_token_coverages = result
-                for sentence_coverages in all_token_coverages:
-                    stats.add_sentence(sentence_coverages)
-            else:
-                pose = result
-
-            pose_frames = len(pose.body.data)
-
-            # Flush current chunk if adding this pose would exceed the limit (keep at least one pose per chunk)
-            if chunk_poses and chunk_frame_count + pose_frames > args.max_frames_per_chunk:
-                chunk_path = os.path.join(args.output_dir, f"chunk_{chunk_index:06d}.pose")
-                _write_chunk(chunk_poses, chunk_path)
-                print(f"  Saved chunk {chunk_index}: {chunk_path} ({chunk_frame_count} frames)")
-                chunk_index += 1
-                chunk_poses = []
-                chunk_frame_count = 0
-
-            start_frame = chunk_frame_count
-            end_frame = chunk_frame_count + pose_frames - 1
-            chunk_path = os.path.join(args.output_dir, f"chunk_{chunk_index:06d}.pose")
-            metadata_rows.append(
-                {
-                    "text": text,
-                    "pose_file": os.path.abspath(chunk_path),
-                    "start_frame": start_frame,
-                    "end_frame": end_frame,
-                }
-            )
-            chunk_poses.append(pose)
-            chunk_frame_count += pose_frames
-            print(f"[{i + 1}/{len(texts)}] buffered into {chunk_path} frames {start_frame}–{end_frame}")
-
-        # Write the last chunk
-        if chunk_poses:
-            chunk_path = os.path.join(args.output_dir, f"chunk_{chunk_index:06d}.pose")
-            _write_chunk(chunk_poses, chunk_path)
-            print(f"  Saved chunk {chunk_index}: {chunk_path} ({chunk_frame_count} frames)")
-
-        # Write metadata TSV
-        metadata_path = os.path.join(args.output_dir, "metadata.tsv")
-        with open(metadata_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["text", "pose_file", "start_frame", "end_frame"], delimiter="\t")
-            writer.writeheader()
-            writer.writerows(metadata_rows)
-        print(f"Metadata saved to: {metadata_path}")
-
+        _bulk_compacted(texts, args, pose_lookup, need_coverage, stats)
     else:
-        for i, text in enumerate(texts):
-            sentences = _text_to_gloss(text, args.spoken_language, args.glosser)
-            result = _gloss_to_pose(sentences, pose_lookup, args.spoken_language, args.signed_language, need_coverage)
-
-            if need_coverage:
-                pose, all_token_coverages = result
-                for sentence_coverages in all_token_coverages:
-                    stats.add_sentence(sentence_coverages)
-            else:
-                pose = result
-
-            pose_path = os.path.join(args.output_dir, f"{i:06d}.pose")
-            with open(pose_path, "wb") as f:
-                pose.write(f)
-            print(f"[{i + 1}/{len(texts)}] {pose_path}")
+        _bulk_sequential(texts, args, pose_lookup, need_coverage, stats)
 
     if need_coverage:
         stats.save(args.coverage_stats)

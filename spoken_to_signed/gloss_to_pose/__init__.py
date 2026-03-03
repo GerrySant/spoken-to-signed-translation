@@ -4,7 +4,6 @@ from pose_format import Pose
 
 from ..text_to_gloss.types import Gloss
 from .concatenate import concatenate_poses
-from .coverage import TokenCoverage
 from .lookup import CSVPoseLookup as CSVPoseLookup
 from .lookup import PoseLookup
 
@@ -21,7 +20,7 @@ def gloss_to_pose(
     """
     Transform a sequence of glosses into a Pose.
 
-    If coverage_info=True, also returns per-token coverage as list[TokenCoverage].
+    If coverage_info=True, also returns per-token coverage as list[coverage.TokenCoverage].
     """
 
     # Lookup

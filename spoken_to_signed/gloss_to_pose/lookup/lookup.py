@@ -114,7 +114,12 @@ class PoseLookup:
         raise FileNotFoundError
 
     def lookup_sequence(
-        self, glosses: Gloss, spoken_language: str, signed_language: str, source: str = None, coverage_info: bool = False
+        self,
+        glosses: Gloss,
+        spoken_language: str,
+        signed_language: str,
+        source: str = None,
+        coverage_info: bool = False,
     ):
         def lookup_pair(pair):
             word, gloss = pair

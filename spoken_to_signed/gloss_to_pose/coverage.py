@@ -1,6 +1,6 @@
 import json
-from dataclasses import dataclass, asdict, field
-from typing import Optional, List
+from dataclasses import asdict, dataclass, field
+from typing import Optional
 
 
 @dataclass
@@ -9,16 +9,16 @@ class TokenCoverage:
     gloss: str
     matched: bool
     coverage_type: Optional[str] = None  # "lexicon", "language_backup", "fingerspelling_backup", or None
-    fingerspelled_keys: Optional[List[str]] = None  # set when coverage_type == "fingerspelling_backup"
+    fingerspelled_keys: Optional[list[str]] = None  # set when coverage_type == "fingerspelling_backup"
 
 
 @dataclass
 class CoverageStats:
     total_tokens: int = 0
     matched_tokens: int = 0
-    sentences: List[List[dict]] = field(default_factory=list)
+    sentences: list[list[dict]] = field(default_factory=list)
 
-    def add_sentence(self, token_coverages: List[TokenCoverage]):
+    def add_sentence(self, token_coverages: list[TokenCoverage]):
         self.sentences.append([asdict(tc) for tc in token_coverages])
         self.total_tokens += len(token_coverages)
         self.matched_tokens += sum(1 for tc in token_coverages if tc.matched)
