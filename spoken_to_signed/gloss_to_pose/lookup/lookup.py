@@ -2,7 +2,6 @@ import math
 import os
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from typing import List
 
 from pose_format import Pose
 
@@ -12,10 +11,7 @@ from spoken_to_signed.text_to_gloss.types import Gloss
 
 
 class PoseLookup:
-    def __init__(self, rows: List,
-                 directory: str = None,
-                 backup: "PoseLookup" = None,
-                 cache: LRUCache = None):
+    def __init__(self, rows: list, directory: str = None, backup: "PoseLookup" = None, cache: LRUCache = None):
         self.directory = directory
 
         self.words_index = self.make_dictionary_index(rows, based_on="words")
@@ -26,31 +22,34 @@ class PoseLookup:
         self.file_systems = {}
         self.cache = cache if cache is not None else LRUCache()
 
-    def make_dictionary_index(self, rows: List, based_on: str):
+    def make_dictionary_index(self, rows: list, based_on: str):
         # As an attempt to make the index more compact in memory, we store a dictionary with only what we need
         languages_dict = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         for d in rows:
             term = d[based_on]
             lower_term = term.lower()
-            languages_dict[d['spoken_language']][d['signed_language']][lower_term].append({
-                "path": d['path'],
-                "term": term,
-                "start": int(d['start']),
-                "end": int(d['end']),
-                "priority": int(d['priority']),
-            })
+            languages_dict[d["spoken_language"]][d["signed_language"]][lower_term].append(
+                {
+                    "path": d["path"],
+                    "term": term,
+                    "start": int(d["start"]),
+                    "end": int(d["end"]),
+                    "priority": int(d["priority"]),
+                }
+            )
         return languages_dict
 
     def read_pose(self, pose_path: str):
-        if pose_path.startswith('gs://'):
-            if 'gcs' not in self.file_systems:
+        if pose_path.startswith("gs://"):
+            if "gcs" not in self.file_systems:
                 import gcsfs
-                self.file_systems['gcs'] = gcsfs.GCSFileSystem(anon=True)
 
-            with self.file_systems['gcs'].open(pose_path, "rb") as f:
+                self.file_systems["gcs"] = gcsfs.GCSFileSystem(anon=True)
+
+            with self.file_systems["gcs"].open(pose_path, "rb") as f:
                 return Pose.read(f.read())
 
-        if pose_path.startswith('https://'):
+        if pose_path.startswith("https://"):
             raise NotImplementedError("Can't access pose files from https endpoint")
 
         if self.directory is None:
@@ -100,7 +99,9 @@ class PoseLookup:
 
         # Backup strategy: revert to backup sign language
         if signed_language in LANGUAGE_BACKUP:
-            pose, coverage_type, sub_elements = self.lookup(word, gloss, spoken_language, LANGUAGE_BACKUP[signed_language], source)
+            pose, coverage_type, sub_elements = self.lookup(
+                word, gloss, spoken_language, LANGUAGE_BACKUP[signed_language], source
+            )
             # If found in the backup language's own lexicon, label as language_backup; otherwise keep the type
             if coverage_type == "lexicon":
                 return pose, "language_backup", None
@@ -112,7 +113,9 @@ class PoseLookup:
 
         raise FileNotFoundError
 
-    def lookup_sequence(self, glosses: Gloss, spoken_language: str, signed_language: str, source: str = None, coverage_info: bool = False):
+    def lookup_sequence(
+        self, glosses: Gloss, spoken_language: str, signed_language: str, source: str = None, coverage_info: bool = False
+    ):
         def lookup_pair(pair):
             word, gloss = pair
             if word == "":
@@ -131,11 +134,12 @@ class PoseLookup:
         poses = [pose for pose, _, _, _, _ in raw_results if pose is not None]
 
         if len(poses) == 0:
-            gloss_sequence = ' '.join([f"{word}/{gloss}" for word, gloss in glosses])
+            gloss_sequence = " ".join([f"{word}/{gloss}" for word, gloss in glosses])
             raise Exception(f"No poses found for {gloss_sequence}")
 
         if coverage_info:
             from spoken_to_signed.gloss_to_pose.coverage import TokenCoverage
+
             token_coverages = [
                 TokenCoverage(
                     word=word,
