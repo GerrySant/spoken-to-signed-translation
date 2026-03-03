@@ -8,6 +8,8 @@ class TokenCoverage:
     word: Optional[str]
     gloss: str
     matched: bool
+    coverage_type: Optional[str] = None  # "lexicon", "language_backup", "fingerspelling_backup", or None
+    fingerspelled_keys: Optional[List[str]] = None  # set when coverage_type == "fingerspelling_backup"
 
 
 @dataclass

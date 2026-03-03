@@ -83,24 +83,28 @@ class PoseLookup:
         # Return the highest priority row
         return rows[0]
 
-    def lookup(self, word: str, gloss: str, spoken_language: str, signed_language: str, source: str = None) -> Pose:
+    def lookup(self, word: str, gloss: str, spoken_language: str, signed_language: str, source: str = None):
         lookup_list = [
             (self.words_index, (spoken_language, signed_language, word)),
             (self.glosses_index, (spoken_language, signed_language, word)),
             (self.glosses_index, (spoken_language, signed_language, gloss)),
         ]
 
-        for dict_index, (spoken_language, signed_language, term) in lookup_list:
-            if spoken_language in dict_index:
-                if signed_language in dict_index[spoken_language]:
+        for dict_index, (sp_lang, si_lang, term) in lookup_list:
+            if sp_lang in dict_index:
+                if si_lang in dict_index[sp_lang]:
                     lower_term = term.lower()
-                    if lower_term in dict_index[spoken_language][signed_language]:
-                        rows = dict_index[spoken_language][signed_language][lower_term]
-                        return self.get_pose(self.get_best_row(rows, term))
+                    if lower_term in dict_index[sp_lang][si_lang]:
+                        rows = dict_index[sp_lang][si_lang][lower_term]
+                        return self.get_pose(self.get_best_row(rows, term)), "lexicon", None
 
         # Backup strategy: revert to backup sign language
         if signed_language in LANGUAGE_BACKUP:
-            return self.lookup(word, gloss, spoken_language, LANGUAGE_BACKUP[signed_language], source)
+            pose, coverage_type, sub_elements = self.lookup(word, gloss, spoken_language, LANGUAGE_BACKUP[signed_language], source)
+            # If found in the backup language's own lexicon, label as language_backup; otherwise keep the type
+            if coverage_type == "lexicon":
+                return pose, "language_backup", None
+            return pose, coverage_type, sub_elements
 
         # Backup strategy: revert to fingerspelling
         if self.backup is not None:
@@ -112,19 +116,19 @@ class PoseLookup:
         def lookup_pair(pair):
             word, gloss = pair
             if word == "":
-                return None, word, gloss
+                return None, None, None, word, gloss
 
             try:
-                pose = self.lookup(word, gloss, spoken_language, signed_language)
-                return pose, word, gloss
+                pose, coverage_type, sub_elements = self.lookup(word, gloss, spoken_language, signed_language)
+                return pose, coverage_type, sub_elements, word, gloss
             except FileNotFoundError as e:
                 print(e)
-                return None, word, gloss
+                return None, None, None, word, gloss
 
         with ThreadPoolExecutor() as executor:
             raw_results = list(executor.map(lookup_pair, glosses))
 
-        poses = [pose for pose, _, _ in raw_results if pose is not None]
+        poses = [pose for pose, _, _, _, _ in raw_results if pose is not None]
 
         if len(poses) == 0:
             gloss_sequence = ' '.join([f"{word}/{gloss}" for word, gloss in glosses])
@@ -133,8 +137,14 @@ class PoseLookup:
         if coverage_info:
             from spoken_to_signed.gloss_to_pose.coverage import TokenCoverage
             token_coverages = [
-                TokenCoverage(word=word, gloss=gloss, matched=(pose is not None))
-                for pose, word, gloss in raw_results
+                TokenCoverage(
+                    word=word,
+                    gloss=gloss,
+                    matched=(coverage_type == "lexicon"),
+                    coverage_type=coverage_type,
+                    fingerspelled_keys=sub_elements,
+                )
+                for pose, coverage_type, sub_elements, word, gloss in raw_results
                 if word != ""  # exclude empty/skipped tokens
             ]
             return poses, token_coverages
