@@ -1,0 +1,36 @@
+import json
+from dataclasses import dataclass, asdict, field
+from typing import Optional, List
+
+
+@dataclass
+class TokenCoverage:
+    word: Optional[str]
+    gloss: str
+    matched: bool
+
+
+@dataclass
+class CoverageStats:
+    total_tokens: int = 0
+    matched_tokens: int = 0
+    sentences: List[List[dict]] = field(default_factory=list)
+
+    def add_sentence(self, token_coverages: List[TokenCoverage]):
+        self.sentences.append([asdict(tc) for tc in token_coverages])
+        self.total_tokens += len(token_coverages)
+        self.matched_tokens += sum(1 for tc in token_coverages if tc.matched)
+
+    @property
+    def fraction(self) -> float:
+        return self.matched_tokens / self.total_tokens if self.total_tokens > 0 else 0.0
+
+    def save(self, path: str):
+        data = {
+            "total_tokens": self.total_tokens,
+            "matched_tokens": self.matched_tokens,
+            "coverage": self.fraction,
+            "sentences": self.sentences,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)

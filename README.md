@@ -80,6 +80,25 @@ text_to_gloss_to_pose \
   --pose <output_pose_file_path>.pose
 ```
 
+Add `--coverage-info` to print per-token lexicon coverage to stdout, or `--coverage-stats <file.json>` to save it to a JSON file.
+
+#### Bulk Text-to-Gloss-to-Pose Translation
+
+This script processes a file of texts (one sentence per line) and writes one pose file per line to an output directory.
+
+```bash
+text_to_gloss_to_pose_bulk \
+  --texts <input_texts_file> \
+  --glosser <simple|spacylemma|rules|nmt> \
+  --lexicon <path_to_directory> \
+  --spoken-language <de|fr|it> \
+  --signed-language <sgg|ssr|slf> \
+  --output-dir <output_directory> \
+  --coverage-stats <coverage_file>.json
+```
+
+The `--coverage-stats` argument is optional. When provided, per-token coverage statistics are accumulated across all sentences and saved as a JSON file. The JSON includes the overall fraction of matched tokens and a per-sentence, per-token breakdown of which glosses were found in the lexicon and which were not.
+
 #### Text-to-Gloss-to-Pose-to-Video Translation
 
 This script translates input text into gloss notation, converts the glosses into a pose file, and then transforms the pose file into a video.

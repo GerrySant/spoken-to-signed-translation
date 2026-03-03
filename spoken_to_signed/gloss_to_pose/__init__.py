@@ -1,8 +1,9 @@
-from typing import Union, Tuple
+from typing import List, Union, Tuple
 
 from pose_format import Pose
 
 from .concatenate import concatenate_poses
+from .coverage import TokenCoverage
 from .lookup import PoseLookup, CSVPoseLookup
 from ..text_to_gloss.types import Gloss
 
@@ -14,11 +15,11 @@ def gloss_to_pose(
     source: str = None,
     anonymize: Union[bool, Pose] = False,
     coverage_info: bool = False,
-) -> Union[Pose, Tuple[Pose, str]]:
+) -> Union[Pose, Tuple[Pose, List[TokenCoverage]]]:
     """
     Transform a sequence of glosses into a Pose.
-    
-    If coverage_info=True, also returns a coverage string.
+
+    If coverage_info=True, also returns per-token coverage as List[TokenCoverage].
     """
 
     # Lookup

@@ -2,13 +2,13 @@ import argparse
 import importlib
 import os
 import tempfile
-from pathlib import Path
 from itertools import chain
 from typing import List, Tuple, Union
 
 from pose_format import Pose
 
 from spoken_to_signed.gloss_to_pose import gloss_to_pose, CSVPoseLookup, concatenate_poses
+from spoken_to_signed.gloss_to_pose.coverage import CoverageStats, TokenCoverage
 from spoken_to_signed.gloss_to_pose.lookup.fingerspelling_lookup import FingerspellingPoseLookup
 from spoken_to_signed.text_to_gloss.types import Gloss
 
@@ -18,40 +18,32 @@ def _text_to_gloss(text: str, language: str, glosser: str, **kwargs) -> List[Glo
     return module.text_to_gloss(text=text, language=language, **kwargs)
 
 
-def add_coverage_to_pose_path(pose_path: str, coverage: str) -> str:
-    """
-    Append coverage info to a pose filename.
-
-    Example:
-        /path/sample.pose + 0.900 → /path/sample_cov0_900.pose
-    """
-    path = Path(pose_path)
-    coverage_token = coverage.replace(".", "_")
-    return str(path.with_name(f"{path.stem}_cov{coverage_token}{path.suffix}"))
-
-
-def _gloss_to_pose(sentences: List[Gloss], lexicon: str, spoken_language: str, signed_language: str, coverage_info: bool = False) -> Union[Pose, Tuple[Pose, str]]:
+def _make_lookup(lexicon: str) -> CSVPoseLookup:
     fingerspelling_lookup = FingerspellingPoseLookup()
-    pose_lookup = CSVPoseLookup(lexicon, backup=fingerspelling_lookup)
+    return CSVPoseLookup(lexicon, backup=fingerspelling_lookup)
 
+
+def _gloss_to_pose(
+    sentences: List[Gloss],
+    pose_lookup: CSVPoseLookup,
+    spoken_language: str,
+    signed_language: str,
+    coverage_info: bool = False,
+) -> Union[Pose, Tuple[Pose, List[List[TokenCoverage]]]]:
     results = [
         gloss_to_pose(gloss, pose_lookup, spoken_language, signed_language, coverage_info=coverage_info)
         for gloss in sentences
     ]
 
-    # --- Backward-compatible path (original behavior) ---
     if not coverage_info:
-        poses = results # gloss_to_pose returns Pose
+        poses = results
         return poses[0] if len(poses) == 1 else concatenate_poses(poses, trim=False)
 
-    # --- Coverage-aware path ---
     poses = [pose for pose, _ in results]
-    coverages = [float(c) for _, c in results]
-    min_coverage = f"{min(coverages):.3f}"
-
+    all_token_coverages = [coverages for _, coverages in results]
     return (
         poses[0] if len(poses) == 1 else concatenate_poses(poses, trim=False),
-        min_coverage,
+        all_token_coverages,
     )
 
 
@@ -116,6 +108,16 @@ def _text_input_arguments(parser: argparse.ArgumentParser):
     parser.add_argument("--signed-language", choices=signed_languages, required=True)
 
 
+def _print_token_coverage(all_token_coverages: List[List[TokenCoverage]]):
+    total = sum(len(s) for s in all_token_coverages)
+    matched = sum(tc.matched for s in all_token_coverages for tc in s)
+    for sentence_coverages in all_token_coverages:
+        for tc in sentence_coverages:
+            status = "✓" if tc.matched else "✗"
+            print(f"  {status}  {tc.word} -> {tc.gloss}")
+    print(f"Coverage: {matched / total:.3f} ({matched}/{total} tokens matched)")
+
+
 def text_to_gloss():
     args_parser = argparse.ArgumentParser()
     _text_input_arguments(args_parser)
@@ -148,28 +150,82 @@ def text_to_gloss_to_pose():
     _text_input_arguments(args_parser)
     args_parser.add_argument("--lexicon", type=str, required=True)
     args_parser.add_argument("--coverage-info", action="store_true",
-                             help="Enables gloss coverage computation and reporting."
-    )
+                             help="Print per-token gloss coverage to stdout.")
+    args_parser.add_argument("--coverage-stats", type=str, default=None,
+                             help="Path to save per-token coverage statistics as a JSON file.")
     args_parser.add_argument("--pose", type=str, required=True)
     args = args_parser.parse_args()
 
-    sentences = _text_to_gloss(args.text, args.spoken_language, args.glosser)
+    need_coverage = args.coverage_info or args.coverage_stats is not None
 
-    result = _gloss_to_pose(sentences, args.lexicon, args.spoken_language, args.signed_language, args.coverage_info)
+    sentences = _text_to_gloss(args.text, args.spoken_language, args.glosser)
+    pose_lookup = _make_lookup(args.lexicon)
+    result = _gloss_to_pose(sentences, pose_lookup, args.spoken_language, args.signed_language, need_coverage)
 
     print("Text to gloss to pose")
     print("Input text:", args.text)
-    if args.coverage_info:
-        pose, coverage = result
-        output_path = add_coverage_to_pose_path(args.pose, coverage)
-        print(f"Output pose: (coverage: {coverage}): {output_path}")
+    print("Output pose:", args.pose)
+
+    if need_coverage:
+        pose, all_token_coverages = result
+        _print_token_coverage(all_token_coverages)
+        if args.coverage_stats:
+            stats = CoverageStats()
+            for sentence_coverages in all_token_coverages:
+                stats.add_sentence(sentence_coverages)
+            stats.save(args.coverage_stats)
+            print(f"Coverage stats saved to: {args.coverage_stats}")
     else:
         pose = result
-        output_path = args.pose
-        print("Output pose:", args.pose)
-    
-    with open(output_path, "wb") as f:
+
+    with open(args.pose, "wb") as f:
         pose.write(f)
+
+
+def text_to_gloss_to_pose_bulk():
+    args_parser = argparse.ArgumentParser(
+        description="Translate a file of texts (one per line) into pose files in bulk.")
+    args_parser.add_argument("--texts", type=str, required=True,
+                             help="Path to a text file with one input sentence per line.")
+    args_parser.add_argument("--glosser", choices=['simple', 'spacylemma', 'rules', 'nmt'], required=True)
+    args_parser.add_argument("--lexicon", type=str, required=True)
+    args_parser.add_argument("--spoken-language", type=str, required=True)
+    args_parser.add_argument("--signed-language", type=str, required=True)
+    args_parser.add_argument("--output-dir", type=str, required=True,
+                             help="Directory where output .pose files are written (named 000000.pose, 000001.pose, …).")
+    args_parser.add_argument("--coverage-stats", type=str, default=None,
+                             help="Path to save aggregated per-token coverage statistics as a JSON file.")
+    args = args_parser.parse_args()
+
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    with open(args.texts, encoding="utf-8") as f:
+        texts = [line.rstrip("\n") for line in f if line.strip()]
+
+    need_coverage = args.coverage_stats is not None
+    stats = CoverageStats() if need_coverage else None
+    pose_lookup = _make_lookup(args.lexicon)
+
+    for i, text in enumerate(texts):
+        sentences = _text_to_gloss(text, args.spoken_language, args.glosser)
+        result = _gloss_to_pose(sentences, pose_lookup, args.spoken_language, args.signed_language, need_coverage)
+
+        if need_coverage:
+            pose, all_token_coverages = result
+            for sentence_coverages in all_token_coverages:
+                stats.add_sentence(sentence_coverages)
+        else:
+            pose = result
+
+        pose_path = os.path.join(args.output_dir, f"{i:06d}.pose")
+        with open(pose_path, "wb") as f:
+            pose.write(f)
+        print(f"[{i + 1}/{len(texts)}] {pose_path}")
+
+    if need_coverage:
+        stats.save(args.coverage_stats)
+        print(f"Coverage stats saved to: {args.coverage_stats}")
+        print(f"Overall coverage: {stats.fraction:.3f} ({stats.matched_tokens}/{stats.total_tokens} tokens matched)")
 
 
 def text_to_gloss_to_pose_to_video():
@@ -180,7 +236,8 @@ def text_to_gloss_to_pose_to_video():
     args = args_parser.parse_args()
 
     sentences = _text_to_gloss(args.text, args.spoken_language, args.glosser, signed_language=args.signed_language)
-    pose = _gloss_to_pose(sentences, args.lexicon, args.spoken_language, args.signed_language)
+    pose_lookup = _make_lookup(args.lexicon)
+    pose = _gloss_to_pose(sentences, pose_lookup, args.spoken_language, args.signed_language)
     _pose_to_video(pose, args.video)
 
     print("Text to gloss to pose to video")

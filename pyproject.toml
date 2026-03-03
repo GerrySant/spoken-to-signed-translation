@@ -1,7 +1,7 @@
 [project]
 name = "spoken-to-signed"
 description = "Simple pipeline for spoken to signed translation"
-version = "0.0.3"
+version = "0.0.4"
 authors = [
     { name = "Amit Moryossef", email = "amitmoryossef@gmail.com" },
     { name = "Mathias Müller", email = "mmueller@cl.uzh.ch" }
@@ -68,4 +68,5 @@ testpaths = [
 text_to_gloss = "spoken_to_signed.bin:text_to_gloss"
 #pose_to_video = "spoken_to_signed.bin:pose_to_video"
 text_to_gloss_to_pose = "spoken_to_signed.bin:text_to_gloss_to_pose"
+text_to_gloss_to_pose_bulk = "spoken_to_signed.bin:text_to_gloss_to_pose_bulk"
 text_to_gloss_to_pose_to_video = "spoken_to_signed.bin:text_to_gloss_to_pose_to_video"

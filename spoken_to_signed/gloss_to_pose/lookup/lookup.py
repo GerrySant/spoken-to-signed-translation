@@ -112,27 +112,31 @@ class PoseLookup:
         def lookup_pair(pair):
             word, gloss = pair
             if word == "":
-                return None
+                return None, word, gloss
 
             try:
-                return self.lookup(word, gloss, spoken_language, signed_language)
+                pose = self.lookup(word, gloss, spoken_language, signed_language)
+                return pose, word, gloss
             except FileNotFoundError as e:
                 print(e)
-                return None
+                return None, word, gloss
 
         with ThreadPoolExecutor() as executor:
-            results = list(executor.map(lookup_pair, glosses))
+            raw_results = list(executor.map(lookup_pair, glosses))
 
-        poses = [result for result in results if result is not None]  # Filter out None results
+        poses = [pose for pose, _, _ in raw_results if pose is not None]
 
         if len(poses) == 0:
             gloss_sequence = ' '.join([f"{word}/{gloss}" for word, gloss in glosses])
             raise Exception(f"No poses found for {gloss_sequence}")
-        
+
         if coverage_info:
-            total = len(results)
-            success = len(poses)
-            coverage = f"{success / total:.3f}" if total > 0 else "0.000"
-            return poses, coverage
+            from spoken_to_signed.gloss_to_pose.coverage import TokenCoverage
+            token_coverages = [
+                TokenCoverage(word=word, gloss=gloss, matched=(pose is not None))
+                for pose, word, gloss in raw_results
+                if word != ""  # exclude empty/skipped tokens
+            ]
+            return poses, token_coverages
 
         return poses
