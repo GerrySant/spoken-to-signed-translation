@@ -1,11 +1,13 @@
-from typing import List, Union, Tuple
+from typing import Union
 
 from pose_format import Pose
 
+from ..text_to_gloss.types import Gloss
 from .concatenate import concatenate_poses
 from .coverage import TokenCoverage
-from .lookup import PoseLookup, CSVPoseLookup
-from ..text_to_gloss.types import Gloss
+from .lookup import CSVPoseLookup as CSVPoseLookup
+from .lookup import PoseLookup
+
 
 def gloss_to_pose(
     glosses: Gloss,
@@ -15,11 +17,11 @@ def gloss_to_pose(
     source: str = None,
     anonymize: Union[bool, Pose] = False,
     coverage_info: bool = False,
-) -> Union[Pose, Tuple[Pose, List[TokenCoverage]]]:
+) -> Union[Pose, tuple]:
     """
     Transform a sequence of glosses into a Pose.
 
-    If coverage_info=True, also returns per-token coverage as List[TokenCoverage].
+    If coverage_info=True, also returns per-token coverage as list[TokenCoverage].
     """
 
     # Lookup
@@ -35,14 +37,18 @@ def gloss_to_pose(
     else:
         poses = result
 
-
     # Anonymize poses
     if anonymize:
         try:
-            from pose_anonymization.appearance import remove_appearance, transfer_appearance
+            from pose_anonymization.appearance import (
+                remove_appearance,
+                transfer_appearance,
+            )
         except ImportError as e:
-            raise ImportError("Please install pose_anonymization. "
-                              "pip install git+https://github.com/sign-language-processing/pose-anonymization") from e
+            raise ImportError(
+                "Please install pose_anonymization. "
+                "pip install git+https://github.com/sign-language-processing/pose-anonymization"
+            ) from e
 
         if isinstance(anonymize, Pose):
             print("Transferring appearance...")

@@ -1,5 +1,4 @@
 from pathlib import Path
-from pathlib import Path
 
 from pose_format import Pose
 
@@ -33,7 +32,7 @@ class FingerspellingPoseLookup(CSVPoseLookup):
 
                     yield from self.characters_lookup(word[:match_index], spoken_language, signed_language)
                     yield key, self.get_pose(rows[key][0])
-                    yield from self.characters_lookup(word[match_index + len(key):], spoken_language, signed_language)
+                    yield from self.characters_lookup(word[match_index + len(key) :], spoken_language, signed_language)
                     break
 
             if not found:
@@ -48,7 +47,8 @@ class FingerspellingPoseLookup(CSVPoseLookup):
     def lookup(self, word: str, gloss: str, spoken_language: str, signed_language: str, source: str = None):
         if spoken_language not in self.words_index or signed_language not in self.words_index[spoken_language]:
             raise FileNotFoundError(
-                f"Language pair {spoken_language} -> {signed_language} not supported for fingerspelling")
+                f"Language pair {spoken_language} -> {signed_language} not supported for fingerspelling"
+            )
 
         pairs = list(self.characters_lookup(word.lower(), spoken_language, signed_language))
         keys = [key for key, _ in pairs]

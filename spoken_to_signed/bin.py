@@ -4,19 +4,24 @@ import importlib
 import os
 import tempfile
 from itertools import chain
-from typing import List, Optional, Tuple, Union
 
 import numpy as np
 from pose_format import Pose
 from pose_format.numpy import NumPyPoseBody
 
-from spoken_to_signed.gloss_to_pose import gloss_to_pose, CSVPoseLookup, concatenate_poses
+from spoken_to_signed.gloss_to_pose import (
+    CSVPoseLookup,
+    concatenate_poses,
+    gloss_to_pose,
+)
 from spoken_to_signed.gloss_to_pose.coverage import CoverageStats, TokenCoverage
-from spoken_to_signed.gloss_to_pose.lookup.fingerspelling_lookup import FingerspellingPoseLookup
+from spoken_to_signed.gloss_to_pose.lookup.fingerspelling_lookup import (
+    FingerspellingPoseLookup,
+)
 from spoken_to_signed.text_to_gloss.types import Gloss
 
 
-def _text_to_gloss(text: str, language: str, glosser: str, **kwargs) -> List[Gloss]:
+def _text_to_gloss(text: str, language: str, glosser: str, **kwargs) -> list[Gloss]:
     module = importlib.import_module(f"spoken_to_signed.text_to_gloss.{glosser}")
     return module.text_to_gloss(text=text, language=language, **kwargs)
 
@@ -27,12 +32,12 @@ def _make_lookup(lexicon: str) -> CSVPoseLookup:
 
 
 def _gloss_to_pose(
-    sentences: List[Gloss],
+    sentences: list[Gloss],
     pose_lookup: CSVPoseLookup,
     spoken_language: str,
     signed_language: str,
     coverage_info: bool = False,
-) -> Union[Pose, Tuple[Pose, List[List[TokenCoverage]]]]:
+) -> "Pose | tuple[Pose, list[list[TokenCoverage]]]":
     results = [
         gloss_to_pose(gloss, pose_lookup, spoken_language, signed_language, coverage_info=coverage_info)
         for gloss in sentences
@@ -63,37 +68,46 @@ def _pose_to_video(pose: Pose, video_path: str):
     models_dir = _get_models_dir()
     pix2pix_path = os.path.join(models_dir, "pix2pix.h5")
     if not os.path.exists(pix2pix_path):
-        print("Downloading pix2pix model")
+        print("Downloading pix2pix model...")
         import urllib.request
+
         urllib.request.urlretrieve(
             "https://firebasestorage.googleapis.com/v0/b/sign-mt-assets/o/models%2Fgenerator%2Fmodel.h5?alt=media",
-            pix2pix_path)
+            pix2pix_path,
+        )
 
+    import shutil
     import subprocess
 
-    try:
-        subprocess.run(["command", "-v", "pose_to_video"], shell=True, check=True)
-    except subprocess.CalledProcessError:
+    if shutil.which("pose_to_video") is None:
         raise RuntimeError(
-            "The command 'pose_to_video' does not exist. Please install the `transcription` package using "
-            "`pip install git+https://github.com/sign-language-processing/transcription`")
+            "The command 'pose_to_video' does not exist. Please install the `pose-to-video` package using "
+            "`pip install 'pose-to-video[pix2pix,simple_upscaler] @ git+https://github.com/sign-language-processing/pose-to-video'`"
+        )
 
     pose_path = tempfile.mktemp(suffix=".pose")
     with open(pose_path, "wb") as f:
         pose.write(f)
 
-    args = ["pose_to_video", "--type=pix_to_pix",
-            "--model", pix2pix_path,
-            "--pose", pose_path,
-            "--video", video_path,
-            "--upscale"]
+    args = [
+        "pose_to_video",
+        "--type=pix2pix",
+        "--model",
+        pix2pix_path,
+        "--pose",
+        pose_path,
+        "--video",
+        video_path,
+        "--processors",
+        "simple_upscaler",
+    ]
     print(" ".join(args))
-    subprocess.run(args, shell=True, check=True)
+    subprocess.run(args, check=True)
 
 
 def _text_input_arguments(parser: argparse.ArgumentParser):
     parser.add_argument("--text", type=str, required=True)
-    parser.add_argument("--glosser", choices=['simple', 'spacylemma', 'rules', 'nmt'], required=True)
+    parser.add_argument("--glosser", choices=["simple", "spacylemma", "rules", "nmt"], required=True)
 
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--lexicon", type=str)
@@ -104,14 +118,14 @@ def _text_input_arguments(parser: argparse.ArgumentParser):
         spoken_languages = list(lookup.words_index.keys())
         signed_languages = set(chain.from_iterable(lookup.words_index[lang].keys() for lang in spoken_languages))
     else:
-        spoken_languages = ['de', 'fr', 'it', 'en']
-        signed_languages = ['sgg', 'gsg', 'bfi', 'ase']
+        spoken_languages = ["de", "fr", "it", "en"]
+        signed_languages = ["sgg", "gsg", "bfi", "ase"]
 
     parser.add_argument("--spoken-language", choices=spoken_languages, required=True)
     parser.add_argument("--signed-language", choices=signed_languages, required=True)
 
 
-def _print_token_coverage(all_token_coverages: List[List[TokenCoverage]]):
+def _print_token_coverage(all_token_coverages: list[list[TokenCoverage]]):
     total = sum(len(s) for s in all_token_coverages)
     matched = sum(tc.matched for s in all_token_coverages for tc in s)
     for sentence_coverages in all_token_coverages:
@@ -152,10 +166,17 @@ def text_to_gloss_to_pose():
     args_parser = argparse.ArgumentParser()
     _text_input_arguments(args_parser)
     args_parser.add_argument("--lexicon", type=str, required=True)
-    args_parser.add_argument("--coverage-info", action="store_true",
-                             help="Print per-token gloss coverage to stdout.")
-    args_parser.add_argument("--coverage-stats", type=str, default=None,
-                             help="Path to save per-token coverage statistics as a JSON file.")
+    args_parser.add_argument(
+        "--coverage-info",
+        action="store_true",
+        help="Print per-token gloss coverage to stdout.",
+    )
+    args_parser.add_argument(
+        "--coverage-stats",
+        type=str,
+        default=None,
+        help="Path to save per-token coverage statistics as a JSON file.",
+    )
     args_parser.add_argument("--pose", type=str, required=True)
     args = args_parser.parse_args()
 
@@ -185,14 +206,14 @@ def text_to_gloss_to_pose():
         pose.write(f)
 
 
-def _raw_concatenate_poses(poses: List[Pose]) -> Pose:
+def _raw_concatenate_poses(poses: list[Pose]) -> Pose:
     new_data = np.concatenate([pose.body.data for pose in poses])
     new_conf = np.concatenate([pose.body.confidence for pose in poses])
     new_body = NumPyPoseBody(fps=poses[0].body.fps, data=new_data, confidence=new_conf)
     return Pose(header=poses[0].header, body=new_body)
 
 
-def _write_chunk(chunk_poses: List[Pose], chunk_path: str):
+def _write_chunk(chunk_poses: list[Pose], chunk_path: str):
     chunk_pose = _raw_concatenate_poses(chunk_poses) if len(chunk_poses) > 1 else chunk_poses[0]
     with open(chunk_path, "wb") as f:
         chunk_pose.write(f)
@@ -200,21 +221,41 @@ def _write_chunk(chunk_poses: List[Pose], chunk_path: str):
 
 def text_to_gloss_to_pose_bulk():
     args_parser = argparse.ArgumentParser(
-        description="Translate a file of texts (one per line) into pose files in bulk.")
-    args_parser.add_argument("--texts", type=str, required=True,
-                             help="Path to a text file with one input sentence per line.")
-    args_parser.add_argument("--glosser", choices=['simple', 'spacylemma', 'rules', 'nmt'], required=True)
+        description="Translate a file of texts (one per line) into pose files in bulk."
+    )
+    args_parser.add_argument(
+        "--texts",
+        type=str,
+        required=True,
+        help="Path to a text file with one input sentence per line.",
+    )
+    args_parser.add_argument("--glosser", choices=["simple", "spacylemma", "rules", "nmt"], required=True)
     args_parser.add_argument("--lexicon", type=str, required=True)
     args_parser.add_argument("--spoken-language", type=str, required=True)
     args_parser.add_argument("--signed-language", type=str, required=True)
-    args_parser.add_argument("--output-dir", type=str, required=True,
-                             help="Directory where output .pose files are written (named 000000.pose, 000001.pose, …).")
-    args_parser.add_argument("--coverage-stats", type=str, default=None,
-                             help="Path to save aggregated per-token coverage statistics as a JSON file.")
-    args_parser.add_argument("--compacted-poses", action="store_true",
-                             help="Concatenate generated poses into chunks instead of saving one file per sentence.")
-    args_parser.add_argument("--max-frames-per-chunk", type=int, default=10000,
-                             help="Maximum number of frames per chunk when --compacted-poses is set (default: 10000).")
+    args_parser.add_argument(
+        "--output-dir",
+        type=str,
+        required=True,
+        help="Directory where output .pose files are written (named 000000.pose, 000001.pose, …).",
+    )
+    args_parser.add_argument(
+        "--coverage-stats",
+        type=str,
+        default=None,
+        help="Path to save aggregated per-token coverage statistics as a JSON file.",
+    )
+    args_parser.add_argument(
+        "--compacted-poses",
+        action="store_true",
+        help="Concatenate generated poses into chunks instead of saving one file per sentence.",
+    )
+    args_parser.add_argument(
+        "--max-frames-per-chunk",
+        type=int,
+        default=10000,
+        help="Maximum number of frames per chunk when --compacted-poses is set (default: 10000).",
+    )
     args = args_parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -227,9 +268,9 @@ def text_to_gloss_to_pose_bulk():
     pose_lookup = _make_lookup(args.lexicon)
 
     if args.compacted_poses:
-        metadata_rows: List[dict] = []
+        metadata_rows: list[dict] = []
         chunk_index = 0
-        chunk_poses: List[Pose] = []
+        chunk_poses: list[Pose] = []
         chunk_frame_count = 0
 
         for i, text in enumerate(texts):
@@ -257,12 +298,14 @@ def text_to_gloss_to_pose_bulk():
             start_frame = chunk_frame_count
             end_frame = chunk_frame_count + pose_frames - 1
             chunk_path = os.path.join(args.output_dir, f"chunk_{chunk_index:06d}.pose")
-            metadata_rows.append({
-                "text": text,
-                "pose_file": os.path.abspath(chunk_path),
-                "start_frame": start_frame,
-                "end_frame": end_frame,
-            })
+            metadata_rows.append(
+                {
+                    "text": text,
+                    "pose_file": os.path.abspath(chunk_path),
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                }
+            )
             chunk_poses.append(pose)
             chunk_frame_count += pose_frames
             print(f"[{i + 1}/{len(texts)}] buffered into {chunk_path} frames {start_frame}–{end_frame}")
