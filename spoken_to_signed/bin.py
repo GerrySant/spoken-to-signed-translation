@@ -1,11 +1,14 @@
 import argparse
+import csv
 import importlib
 import os
 import tempfile
 from itertools import chain
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
+import numpy as np
 from pose_format import Pose
+from pose_format.numpy import NumPyPoseBody
 
 from spoken_to_signed.gloss_to_pose import gloss_to_pose, CSVPoseLookup, concatenate_poses
 from spoken_to_signed.gloss_to_pose.coverage import CoverageStats, TokenCoverage
@@ -182,6 +185,19 @@ def text_to_gloss_to_pose():
         pose.write(f)
 
 
+def _raw_concatenate_poses(poses: List[Pose]) -> Pose:
+    new_data = np.concatenate([pose.body.data for pose in poses])
+    new_conf = np.concatenate([pose.body.confidence for pose in poses])
+    new_body = NumPyPoseBody(fps=poses[0].body.fps, data=new_data, confidence=new_conf)
+    return Pose(header=poses[0].header, body=new_body)
+
+
+def _write_chunk(chunk_poses: List[Pose], chunk_path: str):
+    chunk_pose = _raw_concatenate_poses(chunk_poses) if len(chunk_poses) > 1 else chunk_poses[0]
+    with open(chunk_path, "wb") as f:
+        chunk_pose.write(f)
+
+
 def text_to_gloss_to_pose_bulk():
     args_parser = argparse.ArgumentParser(
         description="Translate a file of texts (one per line) into pose files in bulk.")
@@ -195,6 +211,10 @@ def text_to_gloss_to_pose_bulk():
                              help="Directory where output .pose files are written (named 000000.pose, 000001.pose, …).")
     args_parser.add_argument("--coverage-stats", type=str, default=None,
                              help="Path to save aggregated per-token coverage statistics as a JSON file.")
+    args_parser.add_argument("--compacted-poses", action="store_true",
+                             help="Concatenate generated poses into chunks instead of saving one file per sentence.")
+    args_parser.add_argument("--max-frames-per-chunk", type=int, default=10000,
+                             help="Maximum number of frames per chunk when --compacted-poses is set (default: 10000).")
     args = args_parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -206,21 +226,77 @@ def text_to_gloss_to_pose_bulk():
     stats = CoverageStats() if need_coverage else None
     pose_lookup = _make_lookup(args.lexicon)
 
-    for i, text in enumerate(texts):
-        sentences = _text_to_gloss(text, args.spoken_language, args.glosser)
-        result = _gloss_to_pose(sentences, pose_lookup, args.spoken_language, args.signed_language, need_coverage)
+    if args.compacted_poses:
+        metadata_rows: List[dict] = []
+        chunk_index = 0
+        chunk_poses: List[Pose] = []
+        chunk_frame_count = 0
 
-        if need_coverage:
-            pose, all_token_coverages = result
-            for sentence_coverages in all_token_coverages:
-                stats.add_sentence(sentence_coverages)
-        else:
-            pose = result
+        for i, text in enumerate(texts):
+            sentences = _text_to_gloss(text, args.spoken_language, args.glosser)
+            result = _gloss_to_pose(sentences, pose_lookup, args.spoken_language, args.signed_language, need_coverage)
 
-        pose_path = os.path.join(args.output_dir, f"{i:06d}.pose")
-        with open(pose_path, "wb") as f:
-            pose.write(f)
-        print(f"[{i + 1}/{len(texts)}] {pose_path}")
+            if need_coverage:
+                pose, all_token_coverages = result
+                for sentence_coverages in all_token_coverages:
+                    stats.add_sentence(sentence_coverages)
+            else:
+                pose = result
+
+            pose_frames = len(pose.body.data)
+
+            # Flush current chunk if adding this pose would exceed the limit (keep at least one pose per chunk)
+            if chunk_poses and chunk_frame_count + pose_frames > args.max_frames_per_chunk:
+                chunk_path = os.path.join(args.output_dir, f"chunk_{chunk_index:06d}.pose")
+                _write_chunk(chunk_poses, chunk_path)
+                print(f"  Saved chunk {chunk_index}: {chunk_path} ({chunk_frame_count} frames)")
+                chunk_index += 1
+                chunk_poses = []
+                chunk_frame_count = 0
+
+            start_frame = chunk_frame_count
+            end_frame = chunk_frame_count + pose_frames - 1
+            chunk_path = os.path.join(args.output_dir, f"chunk_{chunk_index:06d}.pose")
+            metadata_rows.append({
+                "text": text,
+                "pose_file": os.path.abspath(chunk_path),
+                "start_frame": start_frame,
+                "end_frame": end_frame,
+            })
+            chunk_poses.append(pose)
+            chunk_frame_count += pose_frames
+            print(f"[{i + 1}/{len(texts)}] buffered into {chunk_path} frames {start_frame}–{end_frame}")
+
+        # Write the last chunk
+        if chunk_poses:
+            chunk_path = os.path.join(args.output_dir, f"chunk_{chunk_index:06d}.pose")
+            _write_chunk(chunk_poses, chunk_path)
+            print(f"  Saved chunk {chunk_index}: {chunk_path} ({chunk_frame_count} frames)")
+
+        # Write metadata TSV
+        metadata_path = os.path.join(args.output_dir, "metadata.tsv")
+        with open(metadata_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["text", "pose_file", "start_frame", "end_frame"], delimiter="\t")
+            writer.writeheader()
+            writer.writerows(metadata_rows)
+        print(f"Metadata saved to: {metadata_path}")
+
+    else:
+        for i, text in enumerate(texts):
+            sentences = _text_to_gloss(text, args.spoken_language, args.glosser)
+            result = _gloss_to_pose(sentences, pose_lookup, args.spoken_language, args.signed_language, need_coverage)
+
+            if need_coverage:
+                pose, all_token_coverages = result
+                for sentence_coverages in all_token_coverages:
+                    stats.add_sentence(sentence_coverages)
+            else:
+                pose = result
+
+            pose_path = os.path.join(args.output_dir, f"{i:06d}.pose")
+            with open(pose_path, "wb") as f:
+                pose.write(f)
+            print(f"[{i + 1}/{len(texts)}] {pose_path}")
 
     if need_coverage:
         stats.save(args.coverage_stats)

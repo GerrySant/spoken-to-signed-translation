@@ -1,4 +1,4 @@
-# Gloss-Based Pipeline for Spoken to Signed Language Translation
+README.md# Gloss-Based Pipeline for Spoken to Signed Language Translation
 
 a `text-to-gloss-to-pose-to-video` pipeline for spoken to signed language translation.
 
@@ -98,6 +98,68 @@ text_to_gloss_to_pose_bulk \
 ```
 
 The `--coverage-stats` argument is optional. When provided, per-token coverage statistics are accumulated across all sentences and saved as a JSON file. The JSON includes the overall fraction of matched tokens and a per-sentence, per-token breakdown of which glosses were found in the lexicon and which were not.
+
+##### Compacted output (chunked poses)
+
+By default each sentence produces its own `.pose` file (`000000.pose`, `000001.pose`, …). When working with large datasets this results in many small files. Use `--compacted-poses` to concatenate the generated poses into larger chunk files instead:
+
+```bash
+text_to_gloss_to_pose_bulk \
+  --texts <input_texts_file> \
+  --glosser <simple|spacylemma|rules|nmt> \
+  --lexicon <path_to_directory> \
+  --spoken-language <de|fr|it> \
+  --signed-language <sgg|ssr|slf> \
+  --output-dir <output_directory> \
+  --compacted-poses \
+  --max-frames-per-chunk 10000
+```
+
+The output directory will contain:
+
+- **Chunk pose files** — `chunk_000000.pose`, `chunk_000001.pose`, …
+  A new chunk is started whenever adding the next sentence's pose would exceed `--max-frames-per-chunk` frames (default: `10000`). A single pose that already exceeds the limit is written as its own chunk.
+
+- **`metadata.tsv`** — a tab-separated file with one row per input sentence, so you can locate any sentence's pose within its chunk:
+
+  | Column | Description |
+  |---|---|
+  | `text` | The source sentence |
+  | `pose_file` | Absolute path to the chunk `.pose` file |
+  | `start_frame` | Index of the first frame belonging to this sentence within the chunk |
+  | `end_frame` | Index of the last frame (inclusive) belonging to this sentence within the chunk |
+
+- **`<coverage_file>.json`** — if `--coverage-stats` is also provided, coverage is still accumulated and saved as usual.
+
+#### Visualizing Coverage
+
+The `scripts/visualize_coverage.py` script renders a coverage JSON file (produced by `--coverage-stats`) in the terminal, coloring each gloss token by how it was matched:
+
+```bash
+python scripts/visualize_coverage.py <coverage_file>.json
+```
+
+Example output:
+
+```
+Legend:
+  ■ matched via lexicon
+  ■ matched via language backup
+  ■ matched via fingerspelling
+  ■ not matched
+
+Sentence: Kleine Kinder essen Pizza in Zürich
+Gloss:    KLEIN KIND ESSEN PIZZA IN ZÜRICH
+
+Overall coverage: 0.833 (5/6 tokens matched)
+```
+
+| Color | Meaning |
+|---|---|
+| Green | Matched directly in the lexicon |
+| Yellow | Matched via a language backup (e.g. `slf→ise`) |
+| Orange | Matched via fingerspelling |
+| Red | Not matched at all |
 
 #### Text-to-Gloss-to-Pose-to-Video Translation
 
