@@ -106,7 +106,13 @@ class PoseLookup:
         return rows[0]
 
     def lookup(
-        self, word: str, gloss: str, spoken_language: str, signed_language: str, source: str = None
+        self,
+        word: str,
+        gloss: str,
+        spoken_language: str,
+        signed_language: str,
+        source: str = None,
+        gloss_placeholder: Optional[str] = None,
     ) -> LookupResult:
         preprocess_steps = get_progressive_gloss_normalizers()
         current_gloss = gloss
@@ -136,7 +142,7 @@ class PoseLookup:
             word = preprocess_steps[-2](word)
 
         # Backup strategy: decompose decimal numbers (e.g. "3.14" → "3" + "." + "14")
-        # Each part is looked up independently — parts not found in the lexicon or fingerspelling are skipped.
+        # Each part is looked up independently — parts not found fall back to gloss_placeholder if provided.
         # sub_elements stores [part, found] pairs so callers can distinguish matched from unmatched parts.
         decimal_parts = split_decimal(gloss)
         if decimal_parts is not None:
@@ -146,13 +152,22 @@ class PoseLookup:
                     poses.append(self.lookup(p, p, spoken_language, signed_language, source).pose)
                     parts_with_status.append([p, True])
                 except FileNotFoundError:
-                    parts_with_status.append([p, False])
+                    if gloss_placeholder is not None:
+                        try:
+                            poses.append(
+                                self.lookup(gloss_placeholder, gloss_placeholder, spoken_language, signed_language, source).pose
+                            )
+                            parts_with_status.append([p, True])
+                        except FileNotFoundError:
+                            parts_with_status.append([p, False])
+                    else:
+                        parts_with_status.append([p, False])
             if poses:
                 return LookupResult(concatenate_poses(poses), "decimal_parts", parts_with_status)
 
         # Backup strategy: revert to backup sign language
         if signed_language in LANGUAGE_BACKUP:
-            result = self.lookup(word, gloss, spoken_language, LANGUAGE_BACKUP[signed_language], source)
+            result = self.lookup(word, gloss, spoken_language, LANGUAGE_BACKUP[signed_language], source, gloss_placeholder)
             # If found in the backup language's own lexicon, label as language_backup; otherwise keep the type
             if result.coverage_type == "lexicon":
                 return LookupResult(result.pose, "language_backup", None)
@@ -160,7 +175,7 @@ class PoseLookup:
 
         # Backup strategy: revert to fingerspelling
         if self.backup is not None:
-            return self.backup.lookup(word, gloss, spoken_language, signed_language, source)
+            return self.backup.lookup(word, gloss, spoken_language, signed_language, source, gloss_placeholder)
 
         raise FileNotFoundError
 
@@ -171,6 +186,7 @@ class PoseLookup:
         signed_language: str,
         source: str = None,
         coverage_info: bool = False,
+        gloss_placeholder: Optional[str] = None,
     ):
         def lookup_pair(pair):
             word, gloss = pair
@@ -178,7 +194,7 @@ class PoseLookup:
                 return PairResult(word=word, gloss=gloss)
 
             try:
-                result = self.lookup(word, gloss, spoken_language, signed_language)
+                result = self.lookup(word, gloss, spoken_language, signed_language, gloss_placeholder=gloss_placeholder)
                 return PairResult(
                     word=word,
                     gloss=gloss,
