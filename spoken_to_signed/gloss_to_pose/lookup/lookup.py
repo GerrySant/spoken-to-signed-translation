@@ -137,17 +137,18 @@ class PoseLookup:
 
         # Backup strategy: decompose decimal numbers (e.g. "3.14" → "3" + "." + "14")
         # Each part is looked up independently — parts not found in the lexicon or fingerspelling are skipped.
+        # sub_elements stores [part, found] pairs so callers can distinguish matched from unmatched parts.
         decimal_parts = split_decimal(gloss)
         if decimal_parts is not None:
-            poses, found_parts = [], []
+            poses, parts_with_status = [], []
             for p in decimal_parts:
                 try:
                     poses.append(self.lookup(p, p, spoken_language, signed_language, source).pose)
-                    found_parts.append(p)
+                    parts_with_status.append([p, True])
                 except FileNotFoundError:
-                    pass
+                    parts_with_status.append([p, False])
             if poses:
-                return LookupResult(concatenate_poses(poses), "decimal_parts", found_parts)
+                return LookupResult(concatenate_poses(poses), "decimal_parts", parts_with_status)
 
         # Backup strategy: revert to backup sign language
         if signed_language in LANGUAGE_BACKUP:
