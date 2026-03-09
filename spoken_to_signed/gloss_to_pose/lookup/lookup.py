@@ -113,7 +113,7 @@ class PoseLookup:
         spoken_language: str,
         signed_language: str,
         source: str = None,
-        gloss_placeholder: Optional[str] = None,
+        number_placeholder: Optional[str] = None,
     ) -> LookupResult:
         preprocess_steps = get_progressive_gloss_normalizers()
         current_gloss = gloss
@@ -143,7 +143,7 @@ class PoseLookup:
             word = preprocess_steps[-2](word)
 
         # Backup strategy: decompose decimal numbers (e.g. "3.14" → "3" + "." + "14")
-        # Each part is looked up independently — parts not found fall back to gloss_placeholder if provided.
+        # Each part is looked up independently — parts not found fall back to number_placeholder if provided.
         # sub_elements stores [part, found] pairs so callers can distinguish matched from unmatched parts.
         decimal_parts = split_decimal(gloss)
         if decimal_parts is not None:
@@ -153,10 +153,10 @@ class PoseLookup:
                     poses.append(self.lookup(p, p, spoken_language, signed_language, source).pose)
                     parts_with_status.append([p, True])
                 except FileNotFoundError:
-                    if gloss_placeholder is not None:
+                    if number_placeholder is not None:
                         try:
                             poses.append(
-                                self.lookup(gloss_placeholder, gloss_placeholder, spoken_language, signed_language, source).pose
+                                self.lookup(number_placeholder, number_placeholder, spoken_language, signed_language, source).pose
                             )
                             parts_with_status.append([p, "placeholder"])
                         except FileNotFoundError:
@@ -168,7 +168,7 @@ class PoseLookup:
 
         # Backup strategy: revert to backup sign language
         if signed_language in LANGUAGE_BACKUP:
-            result = self.lookup(word, gloss, spoken_language, LANGUAGE_BACKUP[signed_language], source, gloss_placeholder)
+            result = self.lookup(word, gloss, spoken_language, LANGUAGE_BACKUP[signed_language], source, number_placeholder)
             # If found in the backup language's own lexicon, label as language_backup; otherwise keep the type
             if result.coverage_type == "lexicon":
                 return LookupResult(result.pose, "language_backup", None)
@@ -176,12 +176,12 @@ class PoseLookup:
 
         # Backup strategy: revert to fingerspelling
         if self.backup is not None:
-            return self.backup.lookup(word, gloss, spoken_language, signed_language, source, gloss_placeholder)
+            return self.backup.lookup(word, gloss, spoken_language, signed_language, source, number_placeholder)
 
         # Final fallback for number tokens: use the placeholder gloss if provided
-        if gloss_placeholder is not None and is_number_token(gloss):
+        if number_placeholder is not None and is_number_token(gloss):
             try:
-                result = self.lookup(gloss_placeholder, gloss_placeholder, spoken_language, signed_language, source)
+                result = self.lookup(number_placeholder, number_placeholder, spoken_language, signed_language, source)
                 return LookupResult(result.pose, "placeholder", None)
             except FileNotFoundError:
                 pass
@@ -195,7 +195,7 @@ class PoseLookup:
         signed_language: str,
         source: str = None,
         coverage_info: bool = False,
-        gloss_placeholder: Optional[str] = None,
+        number_placeholder: Optional[str] = None,
     ):
         def lookup_pair(pair):
             word, gloss = pair
@@ -203,7 +203,7 @@ class PoseLookup:
                 return PairResult(word=word, gloss=gloss)
 
             try:
-                result = self.lookup(word, gloss, spoken_language, signed_language, gloss_placeholder=gloss_placeholder)
+                result = self.lookup(word, gloss, spoken_language, signed_language, number_placeholder=number_placeholder)
                 return PairResult(
                     word=word,
                     gloss=gloss,

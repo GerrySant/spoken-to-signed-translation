@@ -16,12 +16,12 @@ def gloss_to_pose(
     source: str = None,
     anonymize: Union[bool, Pose] = False,
     coverage_info: bool = False,
-    gloss_placeholder: str = None,
+    number_placeholder: str = None,
 ) -> Union[Pose, tuple]:
     # Transform the list of glosses into a list of poses
     result = pose_lookup.lookup_sequence(
         glosses, spoken_language, signed_language, source,
-        coverage_info=coverage_info, gloss_placeholder=gloss_placeholder
+        coverage_info=coverage_info, number_placeholder=number_placeholder
     )
     if coverage_info:
         poses, coverage = result

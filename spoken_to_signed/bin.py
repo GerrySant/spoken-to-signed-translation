@@ -33,13 +33,13 @@ def _gloss_to_pose(
     signed_language: str,
     coverage_info: bool = False,
     use_fingerspelling: bool = True,
-    gloss_placeholder: str = None,
+    number_placeholder: str = None,
 ) -> "Pose | tuple[Pose, list[list[TokenCoverage]]]":
     fingerspelling_lookup = FingerspellingPoseLookup() if use_fingerspelling else None
     pose_lookup = CSVPoseLookup(lexicon, backup=fingerspelling_lookup)
     results = [
         gloss_to_pose(gloss, pose_lookup, spoken_language, signed_language,
-                      coverage_info=coverage_info, gloss_placeholder=gloss_placeholder)
+                      coverage_info=coverage_info, number_placeholder=number_placeholder)
         for gloss in sentences
     ]
 
@@ -184,10 +184,10 @@ def text_to_gloss_to_pose():
         help="Disable fingerspelling fallback during pose lookup.",
     )
     args_parser.add_argument(
-        "--gloss-placeholder",
+        "--number-placeholder",
         type=str,
         default=None,
-        help="Gloss to use as a fallback when a token (e.g. a decimal part) cannot be found in the lexicon.",
+        help="Gloss to sign in place of a number (or decimal part) that cannot be found in the lexicon.",
     )
     args = args_parser.parse_args()
 
@@ -196,7 +196,7 @@ def text_to_gloss_to_pose():
     sentences = _text_to_gloss(args.text, args.spoken_language, args.glosser)
     result = _gloss_to_pose(
         sentences, args.lexicon, args.spoken_language, args.signed_language, need_coverage,
-        use_fingerspelling=not args.no_fingerspelling, gloss_placeholder=args.gloss_placeholder,
+        use_fingerspelling=not args.no_fingerspelling, number_placeholder=args.number_placeholder,
     )
 
     print("Text to gloss to pose")
@@ -232,11 +232,11 @@ def _write_chunk(chunk_poses: list[Pose], chunk_path: str):
         chunk_pose.write(f)
 
 
-def _process_pose(text, spoken_language, glosser, pose_lookup, signed_language, need_coverage, stats, gloss_placeholder=None):
+def _process_pose(text, spoken_language, glosser, pose_lookup, signed_language, need_coverage, stats, number_placeholder=None):
     sentences = _text_to_gloss(text, spoken_language, glosser)
     results = [
         gloss_to_pose(gloss, pose_lookup, spoken_language, signed_language,
-                      coverage_info=need_coverage, gloss_placeholder=gloss_placeholder)
+                      coverage_info=need_coverage, number_placeholder=number_placeholder)
         for gloss in sentences
     ]
     if need_coverage:
@@ -253,7 +253,7 @@ def _bulk_sequential(texts, args, pose_lookup, need_coverage, stats):
     for i, text in enumerate(texts):
         pose = _process_pose(
             text, args.spoken_language, args.glosser, pose_lookup, args.signed_language, need_coverage, stats,
-            gloss_placeholder=args.gloss_placeholder,
+            number_placeholder=args.number_placeholder,
         )
         pose_path = os.path.join(args.output_dir, f"{i:06d}.pose")
         with open(pose_path, "wb") as f:
@@ -270,7 +270,7 @@ def _bulk_compacted(texts, args, pose_lookup, need_coverage, stats):
     for i, text in enumerate(texts):
         pose = _process_pose(
             text, args.spoken_language, args.glosser, pose_lookup, args.signed_language, need_coverage, stats,
-            gloss_placeholder=args.gloss_placeholder,
+            number_placeholder=args.number_placeholder,
         )
         pose_frames = len(pose.body.data)
 
@@ -346,10 +346,10 @@ def text_to_gloss_to_pose_bulk():
         help="Disable fingerspelling fallback during pose lookup.",
     )
     args_parser.add_argument(
-        "--gloss-placeholder",
+        "--number-placeholder",
         type=str,
         default=None,
-        help="Gloss to use as a fallback when a token (e.g. a decimal part) cannot be found in the lexicon.",
+        help="Gloss to sign in place of a number (or decimal part) that cannot be found in the lexicon.",
     )
     args = args_parser.parse_args()
 
@@ -385,16 +385,16 @@ def text_to_gloss_to_pose_to_video():
         help="Disable fingerspelling fallback during pose lookup.",
     )
     args_parser.add_argument(
-        "--gloss-placeholder",
+        "--number-placeholder",
         type=str,
         default=None,
-        help="Gloss to use as a fallback when a token (e.g. a decimal part) cannot be found in the lexicon.",
+        help="Gloss to sign in place of a number (or decimal part) that cannot be found in the lexicon.",
     )
     args = args_parser.parse_args()
 
     sentences = _text_to_gloss(args.text, args.spoken_language, args.glosser, signed_language=args.signed_language)
     pose = _gloss_to_pose(sentences, args.lexicon, args.spoken_language, args.signed_language,
-                          use_fingerspelling=not args.no_fingerspelling, gloss_placeholder=args.gloss_placeholder)
+                          use_fingerspelling=not args.no_fingerspelling, number_placeholder=args.number_placeholder)
     _pose_to_video(pose, args.video)
 
     print("Text to gloss to pose to video")
