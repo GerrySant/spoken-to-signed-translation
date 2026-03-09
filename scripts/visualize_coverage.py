@@ -10,6 +10,7 @@ _COLORS = {
     "lexicon": "\033[92m",           # bright green
     "language_backup": "\033[93m",   # bright yellow
     "fingerspelling_backup": "\033[38;5;214m",  # orange (256-color)
+    "decimal_parts": "\033[96m",     # bright cyan
     None: "\033[91m",                # bright red
 }
 
@@ -17,6 +18,7 @@ _LEGEND = [
     ("lexicon", "matched via lexicon"),
     ("language_backup", "matched via language backup"),
     ("fingerspelling_backup", "matched via fingerspelling"),
+    ("decimal_parts", "matched via decimal decomposition"),
     (None, "not matched"),
 ]
 
