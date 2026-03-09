@@ -8,9 +8,11 @@ from typing import NamedTuple, Optional
 from pose_format import Pose
 
 from spoken_to_signed.gloss_to_pose.languages import LANGUAGE_BACKUP
+from spoken_to_signed.gloss_to_pose.concatenate import concatenate_poses
 from spoken_to_signed.gloss_to_pose.lookup.gloss_normalization_helpers import (
     get_progressive_gloss_normalizers,
     should_normalize_integer_token,
+    split_decimal,
 )
 from spoken_to_signed.gloss_to_pose.lookup.lru_cache import LRUCache
 from spoken_to_signed.text_to_gloss.types import Gloss
@@ -132,6 +134,19 @@ class PoseLookup:
         # This avoids altering decimals or alphanumeric tokens (e.g. "3.14", "A3").
         if should_normalize_integer_token(gloss):
             word = preprocess_steps[-2](word)
+
+        # Backup strategy: decompose decimal numbers (e.g. "3.14" → "3" + "." + "14")
+        decimal_parts = split_decimal(gloss)
+        if decimal_parts is not None:
+            try:
+                integer_part, separator, decimal_part = decimal_parts
+                poses = [
+                    self.lookup(p, p, spoken_language, signed_language, source).pose
+                    for p in (integer_part, separator, decimal_part)
+                ]
+                return LookupResult(concatenate_poses(poses), "decimal_parts", list(decimal_parts))
+            except FileNotFoundError:
+                pass
 
         # Backup strategy: revert to backup sign language
         if signed_language in LANGUAGE_BACKUP:

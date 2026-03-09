@@ -64,6 +64,17 @@ def get_progressive_gloss_normalizers() -> List[Callable[[str], str]]:
     ]
 
 
+def split_decimal(s: str) -> tuple[str, str, str] | None:
+    """
+    If s is a decimal number (e.g. "3.14" or "3,14"), return (integer_part, separator, decimal_part).
+    Otherwise return None.
+    """
+    m = re.fullmatch(r"(\d+)([.,])(\d+)", s.strip())
+    if m:
+        return m.group(1), m.group(2), m.group(3)
+    return None
+
+
 def should_normalize_integer_token(s: str) -> bool:
     """
     Returns True ONLY when:
