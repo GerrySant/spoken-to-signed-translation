@@ -7,21 +7,21 @@ import json
 # ANSI color codes
 _RESET = "\033[0m"
 _COLORS = {
-    "lexicon": "\033[92m",           # bright green
-    "language_backup": "\033[93m",   # bright yellow
-    "fingerspelling_backup": "\033[38;5;214m",  # orange (256-color)
-    "decimal_parts": "\033[96m",     # bright cyan
-    "placeholder": "\033[38;5;202m", # orange-red (256-color)
-    None: "\033[91m",                # bright red
+    "lexicon":               "\033[92m",          # bright green      (best)
+    "decimal_parts":         "\033[38;5;154m",    # yellow-green
+    "language_backup":       "\033[93m",          # bright yellow
+    "fingerspelling_backup": "\033[38;5;214m",    # orange
+    "placeholder":           "\033[38;5;202m",    # orange-red
+    None:                    "\033[91m",          # bright red        (worst)
 }
 
 _LEGEND = [
-    ("lexicon", "matched via lexicon"),
-    ("language_backup", "matched via language backup"),
+    ("lexicon",               "matched via lexicon"),
+    ("decimal_parts",         "matched via decimal decomposition"),
+    ("language_backup",       "matched via language backup"),
     ("fingerspelling_backup", "matched via fingerspelling"),
-    ("decimal_parts", "matched via decimal decomposition"),
-    ("placeholder", "matched via gloss placeholder"),
-    (None, "not matched"),
+    ("placeholder",           "matched via gloss placeholder"),
+    (None,                    "not matched"),
 ]
 
 
