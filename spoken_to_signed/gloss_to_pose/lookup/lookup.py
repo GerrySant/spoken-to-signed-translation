@@ -11,6 +11,7 @@ from spoken_to_signed.gloss_to_pose.languages import LANGUAGE_BACKUP
 from spoken_to_signed.gloss_to_pose.concatenate import concatenate_poses
 from spoken_to_signed.gloss_to_pose.lookup.gloss_normalization_helpers import (
     get_progressive_gloss_normalizers,
+    is_number_token,
     should_normalize_integer_token,
     split_decimal,
 )
@@ -157,7 +158,7 @@ class PoseLookup:
                             poses.append(
                                 self.lookup(gloss_placeholder, gloss_placeholder, spoken_language, signed_language, source).pose
                             )
-                            parts_with_status.append([p, True])
+                            parts_with_status.append([p, "placeholder"])
                         except FileNotFoundError:
                             parts_with_status.append([p, False])
                     else:
@@ -176,6 +177,14 @@ class PoseLookup:
         # Backup strategy: revert to fingerspelling
         if self.backup is not None:
             return self.backup.lookup(word, gloss, spoken_language, signed_language, source, gloss_placeholder)
+
+        # Final fallback for number tokens: use the placeholder gloss if provided
+        if gloss_placeholder is not None and is_number_token(gloss):
+            try:
+                result = self.lookup(gloss_placeholder, gloss_placeholder, spoken_language, signed_language, source)
+                return LookupResult(result.pose, "placeholder", None)
+            except FileNotFoundError:
+                pass
 
         raise FileNotFoundError
 

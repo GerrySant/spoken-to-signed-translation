@@ -64,6 +64,11 @@ def get_progressive_gloss_normalizers() -> List[Callable[[str], str]]:
     ]
 
 
+def is_number_token(s: str) -> bool:
+    """Returns True if s is a number token (integer or decimal)."""
+    return should_normalize_integer_token(s) or split_decimal(s) is not None
+
+
 def split_decimal(s: str) -> tuple[str, str, str] | None:
     """
     If s is a decimal number (e.g. "3.14" or "3,14"), return (integer_part, separator, decimal_part).

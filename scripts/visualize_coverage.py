@@ -11,6 +11,7 @@ _COLORS = {
     "language_backup": "\033[93m",   # bright yellow
     "fingerspelling_backup": "\033[38;5;214m",  # orange (256-color)
     "decimal_parts": "\033[96m",     # bright cyan
+    "placeholder": "\033[38;5;202m", # orange-red (256-color)
     None: "\033[91m",                # bright red
 }
 
@@ -19,6 +20,7 @@ _LEGEND = [
     ("language_backup", "matched via language backup"),
     ("fingerspelling_backup", "matched via fingerspelling"),
     ("decimal_parts", "matched via decimal decomposition"),
+    ("placeholder", "matched via gloss placeholder"),
     (None, "not matched"),
 ]
 
@@ -32,10 +34,12 @@ def _colored_token(token: dict) -> str:
     gloss = token["gloss"]
     if coverage_type == "decimal_parts":
         parts = token.get("fingerspelled_keys") or []
-        return "".join(
-            f"{_COLORS['decimal_parts'] if found else _COLORS[None]}{part}{_RESET}"
-            for part, found in parts
-        ) or _colored(gloss, coverage_type)
+        if parts:
+            return "".join(
+                f"{_COLORS['decimal_parts'] if found is True else _COLORS.get(found, _COLORS[None])}{part}{_RESET}"
+                for part, found in parts
+            )
+        return _colored(gloss, coverage_type)
     return _colored(gloss, coverage_type)
 
 
