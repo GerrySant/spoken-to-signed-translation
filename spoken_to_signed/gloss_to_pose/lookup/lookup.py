@@ -1,5 +1,7 @@
 import math
 import os
+import random
+import re
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -52,15 +54,23 @@ class PoseLookup:
         for d in rows:
             term = d[based_on]
             lower_term = term.lower()
-            languages_dict[d["spoken_language"]][d["signed_language"]][lower_term].append(
-                {
-                    "path": d["path"],
-                    "term": term,
-                    "start": int(d["start"]),
-                    "end": int(d["end"]),
-                    "priority": int(d["priority"]),
-                }
-            )
+            entry = {
+                "path": d["path"],
+                "term": term,
+                "start": int(d["start"]),
+                "end": int(d["end"]),
+                "priority": int(d["priority"]),
+            }
+            languages_dict[d["spoken_language"]][d["signed_language"]][lower_term].append(entry)
+
+            # Many lexicons store multiple signs for the same concept with a trailing number
+            # (e.g. "DANKE 1", "DANKE 2"). Also index them under the base form ("danke") so
+            # that a lookup for the plain word still finds all variants and get_best_row can
+            # select among them.
+            base_term = re.sub(r"\s+\d+$", "", lower_term)
+            if base_term != lower_term:
+                languages_dict[d["spoken_language"]][d["signed_language"]][base_term].append(entry)
+
         return languages_dict
 
     def read_pose(self, pose_path: str):
@@ -97,14 +107,20 @@ class PoseLookup:
         return Pose(pose.header, pose.body[start_frame:end_frame])
 
     def get_best_row(self, rows, term: str):
-        # Sort by priority: lower is "better"
+        # Sort by priority: lower value is "better"
         rows = sorted(rows, key=lambda x: x["priority"])
-        # String match exact term
+
+        # Prefer an exact case-sensitive match at the best priority level
         for row in rows:
             if term == row["term"]:
                 return row
-        # Return the highest priority row
-        return rows[0]
+
+        # If no exact match, randomly select among all rows that share the lowest
+        # priority. This produces variety when multiple signs exist for the same
+        # concept (e.g. "DANKE 1" and "DANKE 2" both at priority 0).
+        best_priority = rows[0]["priority"]
+        best_rows = [r for r in rows if r["priority"] == best_priority]
+        return random.choice(best_rows)
 
     def lookup(
         self,
@@ -115,7 +131,7 @@ class PoseLookup:
         source: str = None,
         number_placeholder: Optional[str] = None,
     ) -> LookupResult:
-        preprocess_steps = get_progressive_gloss_normalizers()
+        preprocess_steps = get_progressive_gloss_normalizers(spoken_language)
         current_gloss = gloss
 
         # Attempts within the main language with progressive normalization
@@ -147,13 +163,16 @@ class PoseLookup:
         # sub_elements stores [part, found] pairs so callers can distinguish matched from unmatched parts.
         decimal_parts = split_decimal(gloss)
         if decimal_parts is not None:
+            integer_part, separator, decimal_part = decimal_parts
             poses, parts_with_status = [], []
-            for p in decimal_parts:
+            # is_numeric=False for the separator (e.g. "." or ",") so it never uses
+            # number_placeholder — a punctuation sign is not a substitute for a number.
+            for p, is_numeric in ((integer_part, True), (separator, False), (decimal_part, True)):
                 try:
                     poses.append(self.lookup(p, p, spoken_language, signed_language, source).pose)
                     parts_with_status.append([p, True])
                 except FileNotFoundError:
-                    if number_placeholder is not None:
+                    if number_placeholder is not None and is_numeric:
                         try:
                             poses.append(
                                 self.lookup(number_placeholder, number_placeholder, spoken_language, signed_language, source).pose
@@ -174,17 +193,17 @@ class PoseLookup:
                 return LookupResult(result.pose, "language_backup", None)
             return result
 
-        # Backup strategy: revert to fingerspelling
-        if self.backup is not None:
-            return self.backup.lookup(word, gloss, spoken_language, signed_language, source, number_placeholder)
-
-        # Final fallback for number tokens: use the placeholder gloss if provided
+        # Fallback for number tokens: use the placeholder gloss if provided
         if number_placeholder is not None and is_number_token(gloss):
             try:
                 result = self.lookup(number_placeholder, number_placeholder, spoken_language, signed_language, source)
                 return LookupResult(result.pose, "placeholder", None)
             except FileNotFoundError:
                 pass
+
+        # Backup strategy: revert to fingerspelling
+        if self.backup is not None:
+            return self.backup.lookup(word, gloss, spoken_language, signed_language, source, number_placeholder)
 
         raise FileNotFoundError
 
