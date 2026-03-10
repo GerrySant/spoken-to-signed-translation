@@ -3,6 +3,7 @@ import os
 import random
 import re
 from collections import defaultdict
+from unicodedata import normalize as unicode_normalize
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import NamedTuple, Optional
@@ -53,7 +54,11 @@ class PoseLookup:
         languages_dict = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         for d in rows:
             term = d[based_on]
-            lower_term = term.lower()
+            # Normalize to NFC so that characters like 'ä' stored as NFD in the CSV
+            # (a + combining diaeresis) become a single precomposed codepoint. Without
+            # this, the fingerspelling substring search fails because the NFD key (length 2)
+            # never matches an NFC character in the lookup word.
+            lower_term = unicode_normalize("NFC", term.lower())
             entry = {
                 "path": d["path"],
                 "term": term,
