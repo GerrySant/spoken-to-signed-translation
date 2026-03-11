@@ -22,6 +22,7 @@ class FingerspellingPoseLookup(CSVPoseLookup):
         }
 
     def characters_lookup(self, word: str, spoken_language: str, signed_language: str):
+        #print(f"[{word}] (fingerspelling) word: {word}")
         if word != "":
             rows = self.words_index[spoken_language][signed_language]
             alphabet = self.alphabets[spoken_language][signed_language]

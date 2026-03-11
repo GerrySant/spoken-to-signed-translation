@@ -251,10 +251,14 @@ def _process_pose(text, spoken_language, glosser, pose_lookup, signed_language, 
 
 def _bulk_sequential(texts, args, pose_lookup, need_coverage, stats):
     for i, text in enumerate(texts):
-        pose = _process_pose(
-            text, args.spoken_language, args.glosser, pose_lookup, args.signed_language, need_coverage, stats,
-            number_placeholder=args.number_placeholder,
-        )
+        try:
+            pose = _process_pose(
+                text, args.spoken_language, args.glosser, pose_lookup, args.signed_language, need_coverage, stats,
+                number_placeholder=args.number_placeholder,
+            )
+        except Exception as e:
+            print(f"[{i + 1}/{len(texts)}] SKIPPED (error: {e}): {text!r}")
+            continue
         pose_path = os.path.join(args.output_dir, f"{i:06d}.pose")
         with open(pose_path, "wb") as f:
             pose.write(f)
@@ -268,10 +272,14 @@ def _bulk_compacted(texts, args, pose_lookup, need_coverage, stats):
     chunk_frame_count = 0
 
     for i, text in enumerate(texts):
-        pose = _process_pose(
-            text, args.spoken_language, args.glosser, pose_lookup, args.signed_language, need_coverage, stats,
-            number_placeholder=args.number_placeholder,
-        )
+        try:
+            pose = _process_pose(
+                text, args.spoken_language, args.glosser, pose_lookup, args.signed_language, need_coverage, stats,
+                number_placeholder=args.number_placeholder,
+            )
+        except Exception as e:
+            print(f"[{i + 1}/{len(texts)}] SKIPPED (error: {e}): {text!r}")
+            continue
         pose_frames = len(pose.body.data)
 
         # Flush current chunk if adding this pose would exceed the limit (keep at least one pose per chunk)
