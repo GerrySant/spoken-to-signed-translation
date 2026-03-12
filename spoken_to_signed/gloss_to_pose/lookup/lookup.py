@@ -190,6 +190,33 @@ class PoseLookup:
             if poses:
                 return LookupResult(concatenate_poses(poses), "decimal_parts", parts_with_status)
 
+        # Backup strategy: split hyphenated compound nouns (e.g. "Online-Geldspiele" → "Online" + "Geldspiele")
+        # In German, noun compounds written with hyphens (e.g. "Online-Geldspiel", "E-Mail-Adresse") are
+        # common. When the full compound is not found, splitting on every hyphen and looking up each part
+        # individually often yields a match. The uppercase check filters out non-compound uses of "-"
+        # (e.g. "e-mail", "-ix" suffixes, negative numbers) — German compound nouns always start each
+        # part with an uppercase letter.
+        # Only succeeds if ALL parts are found; otherwise falls through to the next backup.
+        if "-" in gloss and "-" in word:
+            parts = gloss.split("-")
+            if len(parts) >= 2 and all(p and p[0].isupper() for p in parts):
+                part_poses = []
+                parts_with_type = []
+                for i, part in enumerate(parts):
+                    try:
+                        part_result = self.lookup(part, part, spoken_language, signed_language, source, number_placeholder)
+                        part_poses.append(part_result.pose)
+                        parts_with_type.append([part, part_result.coverage_type])
+                    except FileNotFoundError:
+                        part_poses = []
+                        break
+                    if i < len(parts) - 1:
+                        # Store the "-" separator with None so it renders as unmatched
+                        # but is not counted towards coverage statistics.
+                        parts_with_type.append(["-", None])
+                if part_poses:
+                    return LookupResult(concatenate_poses(part_poses), "compound_split", parts_with_type)
+
         # Backup strategy: revert to backup sign language
         if signed_language in LANGUAGE_BACKUP:
             result = self.lookup(word, gloss, spoken_language, LANGUAGE_BACKUP[signed_language], source, number_placeholder)
@@ -251,17 +278,31 @@ class PoseLookup:
         if coverage_info:
             from spoken_to_signed.gloss_to_pose.coverage import TokenCoverage
 
-            token_coverages = [
-                TokenCoverage(
-                    word=r.word,
-                    gloss=r.gloss,
-                    matched=(r.coverage_type == "lexicon"),
-                    coverage_type=r.coverage_type,
-                    fingerspelled_keys=r.sub_elements,
-                )
-                for r in results
-                if r.word != ""  # exclude empty/skipped tokens
-            ]
+            token_coverages = []
+            for r in results:
+                if r.word == "":  # exclude empty/skipped tokens
+                    continue
+                if r.coverage_type == "compound_split" and r.sub_elements:
+                    # Expand compound parts into individual TokenCoverage objects so that
+                    # each part is counted separately in coverage statistics.
+                    # The "-" separator is included for display purposes but marked with
+                    # coverage_type="separator" so CoverageStats excludes it from the count.
+                    for part, part_type in r.sub_elements:
+                        token_coverages.append(TokenCoverage(
+                            word=part,
+                            gloss=part,
+                            matched=(part_type == "lexicon"),
+                            coverage_type="separator" if part == "-" else part_type,
+                            fingerspelled_keys=None,
+                        ))
+                else:
+                    token_coverages.append(TokenCoverage(
+                        word=r.word,
+                        gloss=r.gloss,
+                        matched=(r.coverage_type == "lexicon"),
+                        coverage_type=r.coverage_type,
+                        fingerspelled_keys=r.sub_elements,
+                    ))
             return poses, token_coverages
 
         return poses

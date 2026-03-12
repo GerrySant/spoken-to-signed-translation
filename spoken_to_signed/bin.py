@@ -153,10 +153,13 @@ def pose_to_video():
 
 
 def _print_token_coverage(all_token_coverages: list[list[TokenCoverage]]):
-    total = sum(len(s) for s in all_token_coverages)
-    matched = sum(tc.matched for s in all_token_coverages for tc in s)
+    countable = [tc for s in all_token_coverages for tc in s if tc.coverage_type != "separator"]
+    total = len(countable)
+    matched = sum(tc.matched for tc in countable)
     for sentence_coverages in all_token_coverages:
         for tc in sentence_coverages:
+            if tc.coverage_type == "separator":
+                continue
             status = "✓" if tc.matched else "✗"
             print(f"  {status}  {tc.word} -> {tc.gloss}")
     print(f"Coverage: {matched / total:.3f} ({matched}/{total} tokens matched)")

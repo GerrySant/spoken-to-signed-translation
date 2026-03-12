@@ -20,8 +20,9 @@ class CoverageStats:
 
     def add_sentence(self, token_coverages: list[TokenCoverage], text: Optional[str] = None):
         self.sentences.append({"text": text, "tokens": [asdict(tc) for tc in token_coverages]})
-        self.total_tokens += len(token_coverages)
-        self.matched_tokens += sum(1 for tc in token_coverages if tc.matched)
+        countable = [tc for tc in token_coverages if tc.coverage_type != "separator"]
+        self.total_tokens += len(countable)
+        self.matched_tokens += sum(1 for tc in countable if tc.matched)
 
     @property
     def fraction(self) -> float:
