@@ -12,7 +12,8 @@ _COLORS = {
     "language_backup":       "\033[93m",        # bright yellow (language rule fallback)
     "fingerspelling_backup": "\033[38;5;208m",  # orange (manual fallback)
     "placeholder":           "\033[95m",        # magenta (special placeholder token)
-    None:                    "\033[38;5;197m"   # strong magenta-red
+    "separator":             "\033[38;5;197m",  # same as unmatched — compound hyphen separator
+    None:                    "\033[38;5;197m",  # strong magenta-red (not matched)
 }
 
 _LEGEND = [
@@ -61,8 +62,20 @@ def visualize(coverage_path: str):
     _print_legend()
 
     for sentence in data["sentences"]:
-        sentence_text = sentence.get("text") or " ".join(t["word"] for t in sentence["tokens"] if t.get("word"))
-        colored_glosses = " ".join(_colored_token(t) for t in sentence["tokens"])
+        sentence_text = sentence.get("text") or " ".join(
+            t["word"] for t in sentence["tokens"] if t.get("word") and t.get("coverage_type") != "separator"
+        )
+        # Join tokens: attach separator tokens ("-") directly without spaces so that
+        # "Online" + "-" + "Geldspiele" renders as "Online-Geldspiele", not "Online - Geldspiele".
+        tokens = sentence["tokens"]
+        colored_parts = []
+        for i, t in enumerate(tokens):
+            is_sep = t.get("coverage_type") == "separator"
+            prev_is_sep = i > 0 and tokens[i - 1].get("coverage_type") == "separator"
+            if i > 0 and not is_sep and not prev_is_sep:
+                colored_parts.append(" ")
+            colored_parts.append(_colored_token(t))
+        colored_glosses = "".join(colored_parts)
         print(f"Sentence: {sentence_text}")
         print(f"Gloss:    {colored_glosses}")
         print()
