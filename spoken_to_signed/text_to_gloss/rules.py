@@ -25,16 +25,81 @@ def print_token(token):
     )
 
 
-def attach_svp(tokens):
+def _to_infinitive(lemma: str) -> str:
+    """Convert a verb lemma to infinitive form.
+
+    When spaCy fails to lemmatize a verb it returns the word form itself (e.g.
+    "Machst" for "machen").  Strip common German conjugation suffixes so that we
+    reconstruct a reasonable infinitive rather than producing garbage like
+    "machstn".  Lemmas that already end in "n" (i.e. are already in infinitive
+    form) are returned unchanged.
+    """
+    lemma = lemma.lower()
+    if lemma.endswith("en"):
+        return lemma
+    # Strip conjugation suffixes in order from longest to shortest so that
+    # "machest" is handled before the shorter "est" branch would be tried.
+    for suffix in ("est", "st", "et", "t", "e"):
+        if lemma.endswith(suffix) and len(lemma) > len(suffix) + 1:
+            lemma = lemma[: -len(suffix)]
+            break
+    if not lemma.endswith("en"):
+        lemma += "en"
+    return lemma
+
+
+def _fix_verb_lemma(token, spacy_model=None):
+    """Return the corrected infinitive for a verb token whose lemma SpaCy failed to assign.
+
+    SpaCy signals failure by returning the word form itself as the lemma. For clitic
+    contractions (e.g. "gibt's") we strip the suffix and re-lemmatize the bare form
+    through the same model so that irregular verbs are handled correctly (e.g. "gibt"
+    → "geben"). Regular verbs fall back to the heuristic _to_infinitive.
+    """
+    lemma = token.text.lower()
+    if "'" in lemma:
+        bare = lemma.split("'")[0]
+        if spacy_model is not None:
+            bare_doc = spacy_model(bare)
+            bare_lemma = bare_doc[0].lemma_ if bare_doc else bare
+            if bare_lemma.lower() == bare:
+                bare_lemma = _to_infinitive(bare)
+            return bare_lemma
+        return _to_infinitive(bare)
+    return _to_infinitive(lemma)
+
+
+def attach_svp(tokens, spacy_model=None):
+    # Pass 1: fix verb lemmas where SpaCy returned the word form as its own lemma.
+    # Must run before svp attachment so that the head lemma is already correct
+    # when the particle is prepended in Pass 2.
     for token in tokens:
-        # fix the wrong verb lemma first
-        if token.pos_ == "VERB":
-            token.lemma_ = token.lemma_.lower()
-            if not token.lemma_.endswith("n"):
-                token.lemma_ += "n"
-        # and prefix the separable verb particle to the corrected lemma
-        elif token.dep_ == "svp":
-            token.head.lemma_ = token.lemma_ + token.head.lemma_
+        is_unlemmatized_verb = (
+            token.pos_ == "VERB" and token.lemma_.lower() == token.text.lower() and not token.ent_type_
+        )
+        # Also catch sentence-initial contracted verbs (e.g. "Gibt's noch Kaffee?") that
+        # the large model mis-tags as non-VERB due to German capitalization rules.
+        # PROPN is excluded — proper nouns like "McDonald's" can also be ROOT in fragments
+        # and must not be passed through _fix_verb_lemma.
+        is_root_contraction = (
+            "'" in token.text and token.dep_ == "ROOT" and
+            token.lemma_.lower() == token.text.lower() and token.pos_ != "PROPN"
+        )
+        if is_unlemmatized_verb or is_root_contraction:
+            token.lemma_ = _fix_verb_lemma(token, spacy_model)
+
+    # Pass 2: prefix each separable verb particle to its (now corrected) head lemma.
+    for token in tokens:
+        if token.dep_ == "svp":
+            head = token.head
+            # Safety net: if the head lemma is still unlemmatized after Pass 1
+            # (e.g. the head was not tagged VERB by the model, or the large model
+            # mis-tagged it as a named entity), fix it now. ent_type_ is intentionally
+            # NOT checked here — the head of an svp is always a verb and must always
+            # be lemmatized regardless of any entity tag.
+            if head.lemma_.lower() == head.text.lower():
+                head.lemma_ = _to_infinitive(head.lemma_.lower())
+            head.lemma_ = token.lemma_ + head.lemma_
 
 
 def get_clauses(tokens):
@@ -379,7 +444,7 @@ def text_to_gloss_given_spacy_model(text: str, spacy_model, lang: str = "de", pu
 
     if lang != "fr":
         # Rule 0: Attach separable verb particle to the verb lemma, but not for French
-        attach_svp(doc)
+        attach_svp(doc, spacy_model)
 
     # split sentence into separate clauses
     clauses = get_clauses(doc)
