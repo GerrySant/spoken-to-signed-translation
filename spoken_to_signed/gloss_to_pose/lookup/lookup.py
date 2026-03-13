@@ -2,7 +2,6 @@ import math
 import os
 import random
 import re
-import threading
 from collections import defaultdict
 from unicodedata import normalize as unicode_normalize
 from concurrent.futures import ThreadPoolExecutor
@@ -39,8 +38,6 @@ class PairResult:
 
 
 class PoseLookup:
-    _pose_read_lock = threading.Lock()
-
     def __init__(self, rows: list, directory: str = None, backup: "PoseLookup" = None, cache: LRUCache = None):
         self.directory = directory
 
@@ -57,6 +54,10 @@ class PoseLookup:
         languages_dict = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         for d in rows:
             term = d[based_on]
+            # Normalize to NFC so that characters like 'ä' stored as NFD in the CSV
+            # (a + combining diaeresis) become a single precomposed codepoint. Without
+            # this, the fingerspelling substring search fails because the NFD key (length 2)
+            # never matches an NFC character in the lookup word.
             lower_term = unicode_normalize("NFC", term.lower())
             entry = {
                 "path": d["path"],
@@ -85,9 +86,7 @@ class PoseLookup:
                 self.file_systems["gcs"] = gcsfs.GCSFileSystem(anon=True)
 
             with self.file_systems["gcs"].open(pose_path, "rb") as f:
-                data = f.read()
-            with self._pose_read_lock:
-                return Pose.read(data)
+                return Pose.read(f.read())
 
         if pose_path.startswith("https://"):
             raise NotImplementedError("Can't access pose files from https endpoint")
@@ -97,9 +96,7 @@ class PoseLookup:
 
         pose_path = os.path.join(self.directory, pose_path)
         with open(pose_path, "rb") as f:
-            data = f.read()
-        with self._pose_read_lock:
-            return Pose.read(data)
+            return Pose.read(f.read())
 
     def get_pose(self, row):
         # Manage pose cache
@@ -146,7 +143,7 @@ class PoseLookup:
         for step_fn in preprocess_steps:
             if step_fn is not None:
                 current_gloss = step_fn(current_gloss)
-                #print(f"[{gloss}] current_gloss ({step_fn}): {current_gloss}")
+
             lookup_list = [
                 (self.words_index, (spoken_language, signed_language, word)),
                 (self.glosses_index, (spoken_language, signed_language, word)),
@@ -173,8 +170,9 @@ class PoseLookup:
         if decimal_parts is not None:
             integer_part, separator, decimal_part = decimal_parts
             poses, parts_with_status = [], []
+            # is_numeric=False for the separator (e.g. "." or ",") so it never uses
+            # number_placeholder — a punctuation sign is not a substitute for a number.
             for p, is_numeric in ((integer_part, True), (separator, False), (decimal_part, True)):
-                #print(f"[{gloss}] p: {p}")
                 try:
                     poses.append(self.lookup(p, p, spoken_language, signed_language, source).pose)
                     parts_with_status.append([p, True])
@@ -191,17 +189,16 @@ class PoseLookup:
                         parts_with_status.append([p, False])
             if poses:
                 return LookupResult(concatenate_poses(poses), "decimal_parts", parts_with_status)
-            
-        # Backup strategy: split hyphenated compound nouns (e.g. "Online-Geldspiele" → "Online" + "Geldspiele")
-        # In German, noun compounds written with hyphens (e.g. "Online-Geldspiel", "E-Mail-Adresse") are
-        # common. When the full compound is not found, splitting on every hyphen and looking up each part
-        # individually often yields a match. The uppercase check filters out non-compound uses of "-"
-        # (e.g. "e-mail", "-ix" suffixes, negative numbers) — German compound nouns always start each
-        # part with an uppercase letter.
+
+        # Backup strategy: split hyphenated compounds (e.g. "Online-Geldspiele", "Corona-spezifisch")
+        # In German, hyphenated compounds often have only the first part capitalised (proper-noun-led
+        # adjectives like "Corona-spezifisch") or all parts capitalised (noun compounds like
+        # "E-Mail-Adresse"). Requiring only the first part to start uppercase is enough to filter out
+        # non-compound uses of "-" (e.g. "e-mail", "-ix" suffixes, negative numbers).
         # Only succeeds if ALL parts are found; otherwise falls through to the next backup.
         if "-" in gloss and "-" in word:
             parts = gloss.split("-")
-            if len(parts) >= 2 and all(p and p[0].isupper() for p in parts):
+            if len(parts) >= 2 and parts[0] and parts[0][0].isupper():
                 part_poses = []
                 parts_with_type = []
                 for i, part in enumerate(parts):
@@ -218,7 +215,6 @@ class PoseLookup:
                         parts_with_type.append(["-", None])
                 if part_poses:
                     return LookupResult(concatenate_poses(part_poses), "compound_split", parts_with_type)
-
 
         # Backup strategy: revert to backup sign language
         if signed_language in LANGUAGE_BACKUP:
