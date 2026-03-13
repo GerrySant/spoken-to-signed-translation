@@ -202,10 +202,17 @@ class PoseLookup:
                 part_poses = []
                 parts_with_type = []
                 for i, part in enumerate(parts):
+                    # Strip surrounding quote characters that may be attached to a part
+                    # when the original text contained quoted tokens (e.g. "DOK"-Serie
+                    # → part "DOK"" → stripped to "DOK").
+                    clean_part = part.strip('"\'\u201c\u201d\u2018\u2019')
+                    if not clean_part:
+                        part_poses = []
+                        break
                     try:
-                        part_result = self.lookup(part, part, spoken_language, signed_language, source, number_placeholder)
+                        part_result = self.lookup(clean_part, clean_part, spoken_language, signed_language, source, number_placeholder)
                         part_poses.append(part_result.pose)
-                        parts_with_type.append([part, part_result.coverage_type])
+                        parts_with_type.append([clean_part, part_result.coverage_type])
                     except FileNotFoundError:
                         part_poses = []
                         break
