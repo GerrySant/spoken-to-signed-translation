@@ -5,11 +5,12 @@ from spoken_to_signed.text_to_gloss.rules import _to_infinitive, attach_svp
 class MockToken:
     """Minimal stand-in for a spaCy Token sufficient for attach_svp."""
 
-    def __init__(self, text, pos_, dep_, lemma_, children=None):
+    def __init__(self, text, pos_, dep_, lemma_, children=None, ent_type_=""):
         self.text = text
         self.pos_ = pos_
         self.dep_ = dep_
         self.lemma_ = lemma_
+        self.ent_type_ = ent_type_
         self._children = children or []
         self.head = None
 
@@ -104,3 +105,17 @@ class TestAttachSvp:
         noun = MockToken("Licht", "NOUN", "obj", "Licht")
         attach_svp([noun])
         assert noun.lemma_ == "Licht"
+
+    def test_named_entity_with_apostrophe_is_unchanged(self):
+        # "McDonald's" is a proper noun — SpaCy tags it as PROPN in production,
+        # which is excluded from is_root_contraction regardless of ent_type_.
+        entity = MockToken("McDonald's", "PROPN", "ROOT", "McDonald's", ent_type_="ORG")
+        attach_svp([entity])
+        assert entity.lemma_ == "McDonald's"
+
+    def test_verb_tagged_misc_entity_with_svp(self):
+        # de_core_news_lg tags "Machst" as ent_type_='MISC'; svp must still produce "ausmachen"
+        verb, svp = _make_verb_with_svp("Machst", "Machst", "aus")
+        verb.ent_type_ = "MISC"
+        attach_svp([verb, svp])
+        assert verb.lemma_ == "ausmachen"
