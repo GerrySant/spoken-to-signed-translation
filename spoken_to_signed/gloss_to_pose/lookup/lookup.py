@@ -190,16 +190,15 @@ class PoseLookup:
             if poses:
                 return LookupResult(concatenate_poses(poses), "decimal_parts", parts_with_status)
 
-        # Backup strategy: split hyphenated compound nouns (e.g. "Online-Geldspiele" → "Online" + "Geldspiele")
-        # In German, noun compounds written with hyphens (e.g. "Online-Geldspiel", "E-Mail-Adresse") are
-        # common. When the full compound is not found, splitting on every hyphen and looking up each part
-        # individually often yields a match. The uppercase check filters out non-compound uses of "-"
-        # (e.g. "e-mail", "-ix" suffixes, negative numbers) — German compound nouns always start each
-        # part with an uppercase letter.
+        # Backup strategy: split hyphenated compounds (e.g. "Online-Geldspiele", "Corona-spezifisch")
+        # In German, hyphenated compounds often have only the first part capitalised (proper-noun-led
+        # adjectives like "Corona-spezifisch") or all parts capitalised (noun compounds like
+        # "E-Mail-Adresse"). Requiring only the first part to start uppercase is enough to filter out
+        # non-compound uses of "-" (e.g. "e-mail", "-ix" suffixes, negative numbers).
         # Only succeeds if ALL parts are found; otherwise falls through to the next backup.
         if "-" in gloss and "-" in word:
             parts = gloss.split("-")
-            if len(parts) >= 2 and all(p and p[0].isupper() for p in parts):
+            if len(parts) >= 2 and parts[0] and parts[0][0].isupper():
                 part_poses = []
                 parts_with_type = []
                 for i, part in enumerate(parts):
