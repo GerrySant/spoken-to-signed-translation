@@ -2,6 +2,7 @@ import math
 import os
 import random
 import re
+import threading
 from collections import defaultdict
 from unicodedata import normalize as unicode_normalize
 from concurrent.futures import ThreadPoolExecutor
@@ -48,6 +49,8 @@ class PoseLookup:
 
         self.file_systems = {}
         self.cache = cache if cache is not None else LRUCache()
+        self._path_locks: dict[str, threading.Lock] = {}
+        self._path_locks_lock = threading.Lock()
 
     def make_dictionary_index(self, rows: list, based_on: str):
         # As an attempt to make the index more compact in memory, we store a dictionary with only what we need
@@ -96,14 +99,29 @@ class PoseLookup:
 
         pose_path = os.path.join(self.directory, pose_path)
         with open(pose_path, "rb") as f:
-            return Pose.read(f.read())
+            try:
+                return Pose.read(f.read())
+            except TypeError as e:
+                raise FileNotFoundError(f"Corrupt pose file (buffer too small): {pose_path}") from e
+
+    def _get_path_lock(self, path: str) -> threading.Lock:
+        with self._path_locks_lock:
+            if path not in self._path_locks:
+                self._path_locks[path] = threading.Lock()
+            return self._path_locks[path]
 
     def get_pose(self, row):
-        # Manage pose cache
+        # Manage pose cache with per-path locking to prevent concurrent reads
+        # of the same file from multiple threads in the ThreadPoolExecutor.
         cached_pose = self.cache.get(row["path"])
         if cached_pose is None:
-            pose = self.read_pose(row["path"])
-            self.cache.set(row["path"], pose)
+            with self._get_path_lock(row["path"]):
+                # Re-check after acquiring the lock — another thread may have
+                # populated the cache while we were waiting.
+                cached_pose = self.cache.get(row["path"])
+                if cached_pose is None:
+                    pose = self.read_pose(row["path"])
+                    self.cache.set(row["path"], pose)
         pose = self.cache.get(row["path"])
 
         frame_time = 1000 / pose.body.fps
@@ -190,22 +208,20 @@ class PoseLookup:
             if poses:
                 return LookupResult(concatenate_poses(poses), "decimal_parts", parts_with_status)
 
-        # Backup strategy: split hyphenated compounds (e.g. "Online-Geldspiele", "Corona-spezifisch")
-        # In German, hyphenated compounds often have only the first part capitalised (proper-noun-led
-        # adjectives like "Corona-spezifisch") or all parts capitalised (noun compounds like
-        # "E-Mail-Adresse"). Requiring only the first part to start uppercase is enough to filter out
-        # non-compound uses of "-" (e.g. "e-mail", "-ix" suffixes, negative numbers).
+        # Backup strategy: split hyphenated compounds (e.g. "Online-Geldspiele", "Corona-spezifisch",
+        # "serbisch-ungarisch", "71-Jährige"). The first part must start with an alphanumeric character
+        # to filter out non-compound uses of "-" (e.g. negative numbers where the first part is empty).
+        # The plural marker "+" is stripped from each part before lookup since the lexicon stores base forms.
         # Only succeeds if ALL parts are found; otherwise falls through to the next backup.
         if "-" in gloss and "-" in word:
             parts = gloss.split("-")
-            if len(parts) >= 2 and parts[0] and parts[0][0].isupper():
+            if len(parts) >= 2 and parts[0] and parts[0][0].isalnum():
                 part_poses = []
                 parts_with_type = []
                 for i, part in enumerate(parts):
-                    # Strip surrounding quote characters that may be attached to a part
-                    # when the original text contained quoted tokens (e.g. "DOK"-Serie
-                    # → part "DOK"" → stripped to "DOK").
-                    clean_part = part.strip('"\'\u201c\u201d\u2018\u2019')
+                    # Strip surrounding quote characters and the plural marker "+" that may be
+                    # attached to a part (e.g. "DOK"-Serie → "DOK", "Blockbuster-Spiel+" → "Spiel").
+                    clean_part = part.strip('"\'\u201c\u201d\u2018\u2019+')
                     if not clean_part:
                         part_poses = []
                         break

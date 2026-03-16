@@ -11,7 +11,8 @@ _COLORS = {
     "language_backup":       "#ffee58",  # bright yellow (language rule fallback)
     "fingerspelling_backup": "#ff9100",  # orange (manual fallback)
     "placeholder":           "#ea80fc",  # magenta (special placeholder token)
-    None:                    "#ff1744",  # strong magenta-red (not matched)
+    "separator":             "#ff1744",  # compound separator
+    None:                    "#ff1744",  # not matched
 }
 
 _LEGEND = [
@@ -20,18 +21,20 @@ _LEGEND = [
     ("language_backup",       "matched via language backup"),
     ("fingerspelling_backup", "matched via fingerspelling"),
     ("placeholder",           "matched via gloss placeholder"),
+    ("separator",             "compound separator"),
     (None,                    "not matched"),
 ]
 
 
 def _span(text: str, coverage_type) -> str:
-    color = _COLORS[coverage_type]
+    color = _COLORS.get(coverage_type, _COLORS[None])
     return f'<span style="color:{color}" title="{coverage_type or "not matched"}">{html.escape(text)}</span>'
 
 
 def _token_html(token: dict) -> str:
     coverage_type = token.get("coverage_type")
     gloss = token["gloss"]
+
     if coverage_type == "decimal_parts":
         parts = token.get("fingerspelled_keys") or []
         if parts:
@@ -39,6 +42,7 @@ def _token_html(token: dict) -> str:
                 _span(part, "decimal_parts" if found is True else (found if found in _COLORS else None))
                 for part, found in parts
             )
+
     return _span(gloss, coverage_type)
 
 
@@ -50,17 +54,36 @@ def _legend_html() -> str:
     return f'<p style="font-family:monospace;font-size:0.9em">{items}</p>'
 
 
+def _render_tokens(tokens):
+    """Render tokens with correct spacing around separators."""
+    parts = []
+
+    for i, t in enumerate(tokens):
+        is_sep = t.get("coverage_type") == "separator"
+        prev_is_sep = i > 0 and tokens[i - 1].get("coverage_type") == "separator"
+
+        if i > 0 and not is_sep and not prev_is_sep:
+            parts.append(" ")
+
+        parts.append(_token_html(t))
+
+    return "".join(parts)
+
+
 def build_html(data: dict) -> str:
     overall = data.get("coverage", 0.0)
     matched = data.get("matched_tokens", 0)
     total = data.get("total_tokens", 0)
 
     rows = []
+
     for sentence in data["sentences"]:
         sentence_text = sentence.get("text") or " ".join(
-            t["word"] for t in sentence["tokens"] if t.get("word")
+            t["word"] for t in sentence["tokens"] if t.get("word") and t.get("coverage_type") != "separator"
         )
-        gloss_html = " ".join(_token_html(t) for t in sentence["tokens"])
+
+        gloss_html = _render_tokens(sentence["tokens"])
+
         rows.append(
             f"""
             <tr>
@@ -113,7 +136,6 @@ def main():
         f.write(report)
 
     print(f"Report written to {args.output_html}")
-
 
 
 if __name__ == "__main__":
