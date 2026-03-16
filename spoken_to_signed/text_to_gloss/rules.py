@@ -1,6 +1,9 @@
 # originally written by Anne Goehring
 # adapted by Mathias Müller
+import re
 import sys
+
+from spacy.tokens import Token
 
 from .common import load_spacy_model
 from .types import Gloss
@@ -61,11 +64,31 @@ def _fix_verb_lemma(token, spacy_model=None):
         bare = lemma.split("'")[0]
         if spacy_model is not None:
             bare_doc = spacy_model(bare)
-            bare_lemma = bare_doc[0].lemma_ if bare_doc else bare
-            if bare_lemma.lower() == bare:
+            bare_lemma = bare_doc[0].lemma_.lower() if bare_doc else bare
+            if bare_lemma == bare:
                 bare_lemma = _to_infinitive(bare)
             return bare_lemma
         return _to_infinitive(bare)
+    # Non-apostrophe path (token already expanded, e.g. "Schick" or "McDonald"):
+    # use SpaCy to verify the form is actually a verb before applying _to_infinitive.
+    if spacy_model is not None:
+        bare_doc = spacy_model(lemma)
+        if bare_doc and bare_doc[0].pos_ in {"VERB", "AUX"}:
+            # SpaCy already recognises it as a verb — use its lemma if different.
+            spacy_lemma = bare_doc[0].lemma_.lower()
+            if spacy_lemma != lemma:
+                return spacy_lemma
+            return _to_infinitive(lemma)
+        # SpaCy did not tag the bare form as a verb (e.g. "schick" → ADJ).
+        # Try the heuristic infinitive and check whether THAT form is a verb.
+        candidate = _to_infinitive(lemma)
+        inf_doc = spacy_model(candidate)
+        if inf_doc and inf_doc[0].pos_ in {"VERB", "AUX"}:
+            # The infinitive is a real German verb — use it.
+            return candidate
+        # Neither the bare form nor the candidate infinitive is a verb
+        # (e.g. "mcdonald" → "mcdonalden" → not a verb): leave lemma unchanged.
+        return token.lemma_
     return _to_infinitive(lemma)
 
 
@@ -75,18 +98,59 @@ def attach_svp(tokens, spacy_model=None):
     # when the particle is prepended in Pass 2.
     for token in tokens:
         is_unlemmatized_verb = (
-            token.pos_ == "VERB" and token.lemma_.lower() == token.text.lower() and not token.ent_type_
+            token.pos_ == "VERB" and token.lemma_.lower() == token.text.lower()
         )
-        # Also catch sentence-initial contracted verbs (e.g. "Gibt's noch Kaffee?") that
-        # the large model mis-tags as non-VERB due to German capitalization rules.
-        # PROPN is excluded — proper nouns like "McDonald's" can also be ROOT in fragments
-        # and must not be passed through _fix_verb_lemma.
-        is_root_contraction = (
-            "'" in token.text and token.dep_ == "ROOT" and
-            token.lemma_.lower() == token.text.lower() and token.pos_ != "PROPN"
+        # Also catch imperative verbs mis-tagged as PROPN by the large model
+        # (e.g. "Schick" in "Schick es mir" tagged as PROPN/PER).
+        # ROOT dep_ distinguishes them from real proper nouns.
+        is_mistagged_verb = (
+            token.pos_ == "PROPN" and token.dep_ == "ROOT" and
+            token.lemma_.lower() == token.text.lower() and
+            Token.has_extension("original_text") and token._.original_text is not None
         )
-        if is_unlemmatized_verb or is_root_contraction:
+        if token.lemma_.lower() == token.text.lower() and not is_unlemmatized_verb and not is_mistagged_verb:
+            print(f"[DEBUG] Pass 1 skip: text='{token.text}' pos_='{token.pos_}' "
+                  f"ent_type_='{token.ent_type_}'", file=sys.stderr)
+        if is_unlemmatized_verb or is_mistagged_verb:
             token.lemma_ = _fix_verb_lemma(token, spacy_model)
+
+    # Pass 3: mark injected 'es' as expletive for PROPN contractions (e.g. "McDonald's"
+    # expanded to "McDonald es") — those 'es' are not real pronouns and must be filtered.
+    token_list = list(tokens)
+    if Token.has_extension("original_text"):
+        for i, token in enumerate(token_list[:-1]):
+            if token._.original_text is None or token.pos_ != "PROPN":
+                continue
+            next_token = token_list[i + 1]
+            if next_token.text.lower() != "es":
+                continue
+            # A real PROPN contraction (e.g. "McDonald's") has its lemma unchanged after Pass 1.
+            # A mis-tagged verb contraction (e.g. "Schick's" → lemma "schicken") has a different lemma.
+            is_real_propn_contraction = token.lemma_.lower() == token.text.lower()
+            if is_real_propn_contraction:
+                print(f"[DEBUG] Pass 3: marking 'es' after PROPN '{token._.original_text}' as expletive",
+                      file=sys.stderr)
+                next_token.dep_ = "ep"
+            elif next_token.dep_ == "ep":
+                # SpaCy wrongly tagged the 'es' as expletive; it is a real object pronoun.
+                print(f"[DEBUG] Pass 3: restoring 'es' after verb '{token._.original_text}' from ep to oa",
+                      file=sys.stderr)
+                next_token.dep_ = "oa"  # accusative object
+
+    # Pass 4: detect dummy 'es' in impersonal constructions (e.g. "wird's ungemütlicher").
+    # Conditions: 'es' is subject of a VERB/AUX, no other subject exists, and the verb has
+    # a predicate complement (dep_='pd') — a reliable signal of an impersonal predication.
+    for token in token_list:
+        if (
+            token.text.lower() == "es"
+            and token.dep_ == "sb"
+            and token.head.pos_ in {"VERB", "AUX"}
+            and not any(t for t in token.head.children if t.dep_ == "sb" and t != token)
+            and any(t for t in token.head.children if t.dep_ == "pd")
+        ):
+            print(f"[DEBUG] Pass 4: marking dummy 'es' as expletive (head='{token.head.text}', pred complement found)",
+                  file=sys.stderr)
+            token.dep_ = "ep"
 
     # Pass 2: prefix each separable verb particle to its (now corrected) head lemma.
     for token in tokens:
@@ -357,7 +421,14 @@ def glossify(tokens):
         # if t.ent_type_ == "LOC" and t.head.pos_ == "ADP":
         #     glosses.append(t.head.text)
 
-        yield (gloss, t.text)
+        has_original = Token.has_extension("original_text") and t._.original_text is not None
+        original_text = t._.original_text if has_original else t.text
+        # For real PROPN contractions (e.g. "McDonald's" → "McDonald"), restore the original form
+        # as the gloss.  Mis-tagged verb contractions (e.g. "Schick's" → lemma "schicken") have
+        # a different lemma after Pass 1, so they keep their fixed lemma as the gloss.
+        if has_original and t.pos_ == "PROPN" and t.lemma_.lower() == t.text.lower():
+            gloss = t._.original_text
+        yield (gloss, original_text)
 
 
 def clause_to_gloss(clause, lang: str, punctuation=False) -> tuple[list[str], list[str]]:
@@ -365,6 +436,10 @@ def clause_to_gloss(clause, lang: str, punctuation=False) -> tuple[list[str], li
     clause = reorder_svo_triplets(clause)
 
     # Rule 2: Discard all tokens with unwanted PoS
+    for t in clause:
+        if t.pos_ == "PRON":
+            print(f"[DEBUG] PRON token: text='{t.text}' lemma='{t.lemma_}' dep_='{t.dep_}' tag_='{t.tag_}'",
+                  file=sys.stderr)
     tokens = [
         t
         for t in clause
@@ -436,11 +511,63 @@ def clause_to_gloss(clause, lang: str, punctuation=False) -> tuple[list[str], li
     return glosses, tokens
 
 
+def expand_contractions_de(text: str) -> tuple[str, dict]:
+    """Fully expand German verb contractions of the form "word's" → "word es".
+
+    Returns (expanded_text, contraction_map) where contraction_map maps the
+    character offset of each bare word in the expanded text to its original
+    "word's" form. This allows the original form to be restored in the gloss
+    output after SpaCy processes the grammatically correct expanded sentence.
+
+    PROPN contractions like "McDonald's" are also expanded here; Pass 3 in
+    attach_svp uses the contraction_map + pos_ == PROPN to remove the injected
+    'es' for those cases.
+    """
+    contraction_map = {}
+    result = []
+    prev_end = 0
+    offset_delta = 0
+
+    for m in re.finditer(r"\b(\w+)'s\b", text):
+        original_form = m.group(0)   # e.g. "Zeigt's"
+        bare_form = m.group(1)        # e.g. "Zeigt"
+        replacement = bare_form + " es"
+
+        expanded_start = m.start() + offset_delta
+        contraction_map[expanded_start] = original_form
+
+        result.append(text[prev_end:m.start()])
+        result.append(replacement)
+        prev_end = m.end()
+        offset_delta += len(replacement) - len(original_form)
+
+    result.append(text[prev_end:])
+    expanded_text = "".join(result)
+
+    if expanded_text != text:
+        print(f"[DEBUG] expand_contractions_de: '{text}' → '{expanded_text}'", file=sys.stderr)
+
+    return expanded_text, contraction_map
+
+
 def text_to_gloss_given_spacy_model(text: str, spacy_model, lang: str = "de", punctuation=False) -> dict:
     if text.strip() == "":
         return {"glosses": [], "tokens": [], "gloss_string": ""}
 
+    contraction_map = {}
+    if lang == "de":
+        text, contraction_map = expand_contractions_de(text)
+
     doc = spacy_model(text)
+
+    if contraction_map:
+        if not Token.has_extension("original_text"):
+            Token.set_extension("original_text", default=None)
+        for token in doc:
+            if token.idx in contraction_map:
+                token._.original_text = contraction_map[token.idx]
+                print(f"[DEBUG] restored original_text='{contraction_map[token.idx]}' "
+                      f"for token '{token.text}'", file=sys.stderr)
 
     if lang != "fr":
         # Rule 0: Attach separable verb particle to the verb lemma, but not for French
